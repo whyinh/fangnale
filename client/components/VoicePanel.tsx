@@ -222,7 +222,7 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
        * 返回：{ transcript: string, name: string, location: string, category_id: number | null, tags: string[] }
        */
       const formData = new FormData();
-      formData.append('audio', createFormDataFile(uri, `voice_${Date.now()}.m4a`, 'audio/m4a') as any);
+      formData.append('audio', (await createFormDataFile(uri, `voice_${Date.now()}.m4a`, 'audio/m4a')) as any);
       const res = await fetch(`${BASE}/api/v1/speech/voice-note`, { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '识别失败');
@@ -247,7 +247,7 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
        * 返回：{ transcript: string }
        */
       const formData = new FormData();
-      formData.append('audio', createFormDataFile(uri, `voice_${Date.now()}.m4a`, 'audio/m4a') as any);
+      formData.append('audio', (await createFormDataFile(uri, `voice_${Date.now()}.m4a`, 'audio/m4a')) as any);
       const res = await fetch(`${BASE}/api/v1/speech/transcribe`, { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '识别失败');

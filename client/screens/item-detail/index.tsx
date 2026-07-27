@@ -128,7 +128,7 @@ export default function ItemDetailScreen() {
        * Body 参数（FormData）：photo: 图片文件
        */
       const formData = new FormData();
-      formData.append('photo', createFormDataFile(result.assets[0].uri, `item_${Date.now()}.jpg`, 'image/jpeg') as any);
+      formData.append('photo', (await createFormDataFile(result.assets[0].uri, `item_${Date.now()}.jpg`, 'image/jpeg')) as any);
       const upRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo`, { method: 'POST', body: formData });
       if (!upRes.ok) throw new Error('照片上传失败');
       const upData = await upRes.json();
