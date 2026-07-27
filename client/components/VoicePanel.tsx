@@ -81,6 +81,9 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
   const [playing, setPlaying] = useState(false);
 
   const recorder = useAudioRecorder(webRecordingOptions);
+  const recorderState = useAudioRecorderState(recorder);
+  const isRecordingRef = useRef(false);
+  isRecordingRef.current = recorderState.isRecording;
   const playerRef = useRef<AudioPlayer | null>(null);
   const sseRef = useRef<EventSource | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -115,10 +118,14 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
       playerRef.current.remove();
       playerRef.current = null;
     }
-    if (recorder.isRecording) {
-      recorder.stop().catch(() => undefined);
+    if (isRecordingRef.current) {
+      try {
+        recorder.stop().catch(() => undefined);
+      } catch {
+        // 原生录音对象可能已释放（卸载/热更新），忽略
+      }
     }
-  }, []);
+  }, [recorder]);
 
   useEffect(() => {
     if (!visible) cleanup();
