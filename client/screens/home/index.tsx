@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -92,15 +92,8 @@ export default function HomeScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-
-  // 搜索防抖：停止输入 350ms 后才真正触发请求，避免逐字强制搜索打断输入
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(searchQuery.trim());
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+  // 已提交的搜索词：只有用户主动点搜索键/搜索图标时才更新，输入过程绝不触发请求
+  const [submittedQuery, setSubmittedQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
   const [viewMode, setViewMode] = useState<ViewMode>('all');
@@ -130,7 +123,7 @@ export default function HomeScreen() {
       let url = `${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`;
       const params: string[] = [];
       if (selectedCategory) params.push(`category_id=${selectedCategory}`);
-      if (debouncedQuery) params.push(`search=${encodeURIComponent(debouncedQuery)}`);
+      if (submittedQuery) params.push(`search=${encodeURIComponent(submittedQuery)}`);
       if (params.length > 0) url += `?${params.join('&')}`;
 
       /**
@@ -172,7 +165,7 @@ export default function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  }, [selectedCategory, debouncedQuery]);
+  }, [selectedCategory, submittedQuery]);
 
   useFocusEffect(
     useCallback(() => {
@@ -213,9 +206,9 @@ export default function HomeScreen() {
     [showExpiringOnly, expiringItems, items]
   );
 
+  // 提交搜索：仅在用户主动触发时生效
   const handleSearch = () => {
-    // 提交时立即同步防抖值，不等 350ms
-    setDebouncedQuery(searchQuery.trim());
+    setSubmittedQuery(searchQuery.trim());
   };
 
   // AI 问一问
@@ -338,18 +331,21 @@ export default function HomeScreen() {
         {/* Search Bar + AI 问 + 视图切换 */}
         <View style={styles.searchContainer}>
           <View style={styles.searchBar}>
-            <FontAwesome6 name="magnifying-glass" size={16} color="#B2BEC3" />
+            <TouchableOpacity onPress={handleSearch} hitSlop={8}>
+              <FontAwesome6 name="magnifying-glass" size={16} color="#B2BEC3" />
+            </TouchableOpacity>
             <TextInput
               style={styles.searchInput}
-              placeholder="搜物品，或问：我的护照在哪..."
+              placeholder="输入后点搜索，或问：护照在哪..."
               placeholderTextColor="#B2BEC3"
               value={searchQuery}
               onChangeText={setSearchQuery}
               onSubmitEditing={handleSearch}
               returnKeyType="search"
+              blurOnSubmit
             />
             {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => { setSearchQuery(''); }}>
+              <TouchableOpacity onPress={() => { setSearchQuery(''); setSubmittedQuery(''); }}>
                 <FontAwesome6 name="xmark" size={16} color="#B2BEC3" />
               </TouchableOpacity>
             )}
