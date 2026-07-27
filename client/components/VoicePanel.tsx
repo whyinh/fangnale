@@ -14,7 +14,8 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { Audio } from 'expo-av';
+import { useAudioRecorder, useAudioRecorderState, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, createAudioPlayer } from 'expo-audio';
+import type { AudioPlayer } from 'expo-audio';
 import { Feather } from '@expo/vector-icons';
 import EventSource from 'react-native-sse';
 import { createFormDataFile } from '@/utils';
@@ -37,6 +38,30 @@ interface VoicePanelProps {
   onSaved: () => void;
 }
 
+// Web 端 MediaRecorder 默认输出 audio/webm，后端 ASR 不支持；
+// 按浏览器能力选择 audio/mp4（Chrome/Safari）或 audio/ogg（Firefox），均兼容 ASR。
+function buildWebRecordingOptions() {
+  const preset = RecordingPresets.HIGH_QUALITY as any;
+  if (Platform.OS !== 'web' || typeof (globalThis as any).MediaRecorder === 'undefined') {
+    return preset;
+  }
+  const MediaRecorderCtor = (globalThis as any).MediaRecorder;
+  const candidates = ['audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/webm'];
+  const mimeType = candidates.find((m) => {
+    try {
+      return MediaRecorderCtor.isTypeSupported(m);
+    } catch {
+      return false;
+    }
+  });
+  return {
+    ...preset,
+    web: { ...(preset.web || {}), ...(mimeType ? { mimeType } : {}) },
+  };
+}
+
+const webRecordingOptions = buildWebRecordingOptions();
+
 export default function VoicePanel({ visible, categories, onClose, onSaved }: VoicePanelProps) {
   const [mode, setMode] = useState<Mode>('note');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -55,8 +80,8 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
   const [askStreaming, setAskStreaming] = useState(false);
   const [playing, setPlaying] = useState(false);
 
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const recorder = useAudioRecorder(webRecordingOptions);
+  const playerRef = useRef<AudioPlayer | null>(null);
   const sseRef = useRef<EventSource | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -86,13 +111,12 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
       sseRef.current.close();
       sseRef.current = null;
     }
-    if (soundRef.current) {
-      soundRef.current.unloadAsync().catch(() => undefined);
-      soundRef.current = null;
+    if (playerRef.current) {
+      playerRef.current.remove();
+      playerRef.current = null;
     }
-    if (recordingRef.current) {
-      recordingRef.current.stopAndUnloadAsync().catch(() => undefined);
-      recordingRef.current = null;
+    if (recorder.isRecording) {
+      recorder.stop().catch(() => undefined);
     }
   }, []);
 
@@ -124,14 +148,13 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
   const startRecording = async () => {
     try {
       setErrorText('');
-      const { granted } = await Audio.requestPermissionsAsync();
+      const { granted } = await requestRecordingPermissionsAsync();
       if (!granted) {
         Alert.alert('需要麦克风权限', '请在系统设置中允许 App 使用麦克风');
         return;
       }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      recordingRef.current = recording;
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      recorder.record();
       setPhase('recording');
       // 最长 60 秒自动停止
       recordTimerRef.current = setTimeout(() => {
@@ -144,18 +167,15 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
   };
 
   const stopRecording = async () => {
-    const recording = recordingRef.current;
-    if (!recording) return;
     if (recordTimerRef.current) {
       clearTimeout(recordTimerRef.current);
       recordTimerRef.current = null;
     }
     setPhase('processing');
-    recordingRef.current = null;
     try {
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      await recorder.stop();
+      const uri = recorder.uri;
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => undefined);
       if (uri) {
         await processAudio(uri);
       } else {
@@ -293,9 +313,9 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
 
   const playTts = async (text: string) => {
     try {
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
-        soundRef.current = null;
+      if (playerRef.current) {
+        playerRef.current.remove();
+        playerRef.current = null;
       }
       setPlaying(true);
       /**
@@ -311,27 +331,27 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
       });
       const data = await res.json();
       if (!res.ok || !data.audio_url) throw new Error('语音合成失败');
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-      const { sound } = await Audio.Sound.createAsync({ uri: data.audio_url }, { shouldPlay: true });
-      soundRef.current = sound;
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      const player = createAudioPlayer({ uri: data.audio_url });
+      playerRef.current = player;
+      player.addListener('playbackStatusUpdate', (status: any) => {
+        if (status.didJustFinish) {
           setPlaying(false);
-          sound.unloadAsync().catch(() => undefined);
-          soundRef.current = null;
+          player.remove();
+          if (playerRef.current === player) playerRef.current = null;
         }
       });
+      player.play();
     } catch (e) {
       console.error('playTts failed:', e);
       setPlaying(false);
     }
   };
 
-  const stopTts = async () => {
-    if (soundRef.current) {
-      await soundRef.current.stopAsync().catch(() => undefined);
-      await soundRef.current.unloadAsync().catch(() => undefined);
-      soundRef.current = null;
+  const stopTts = () => {
+    if (playerRef.current) {
+      playerRef.current.remove();
+      playerRef.current = null;
     }
     setPlaying(false);
   };
