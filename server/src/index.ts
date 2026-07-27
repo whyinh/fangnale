@@ -3,6 +3,7 @@ import cors from "cors";
 import categoriesRouter from "./routes/categories.js";
 import itemsRouter from "./routes/items.js";
 import uploadRouter from "./routes/upload.js";
+import speechRouter from "./routes/speech.js";
 
 const app = express();
 const port = process.env.PORT || 9091;
@@ -21,6 +22,7 @@ app.get("/api/v1/health", (_req, res) => {
 app.use("/api/v1/categories", categoriesRouter);
 app.use("/api/v1/items", itemsRouter);
 app.use("/api/v1/upload", uploadRouter);
+app.use("/api/v1/speech", speechRouter);
 
 // Error handling middleware
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

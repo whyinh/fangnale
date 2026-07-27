@@ -20,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { QuickSaveModal } from '@/components/QuickSaveModal';
 import AskModal from '@/components/AskModal';
+import VoicePanel from '@/components/VoicePanel';
 
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 
@@ -100,6 +101,7 @@ export default function HomeScreen() {
   const [quickSaveUri, setQuickSaveUri] = useState<string | null>(null);
   const [quickSaveVisible, setQuickSaveVisible] = useState(false);
   const [askVisible, setAskVisible] = useState(false);
+  const [showVoicePanel, setShowVoicePanel] = useState(false);
   const [askQuestion, setAskQuestion] = useState('');
   const [showExpiringOnly, setShowExpiringOnly] = useState(false);
 
@@ -465,6 +467,15 @@ export default function HomeScreen() {
           />
         )}
 
+        {/* 语音速记/语音查找入口（相机 FAB 上方） */}
+        <TouchableOpacity
+          style={[styles.voiceFab, { bottom: 164 + (Platform.OS === 'ios' ? insets.bottom : 0) }]}
+          onPress={() => setShowVoicePanel(true)}
+          activeOpacity={0.85}
+        >
+          <FontAwesome6 name="microphone" size={20} color="#FFF" />
+        </TouchableOpacity>
+
         {/* 浮动拍照按钮（FAB） */}
         <TouchableOpacity
           style={[styles.fab, { bottom: 92 + (Platform.OS === 'ios' ? insets.bottom : 0) }]}
@@ -473,6 +484,14 @@ export default function HomeScreen() {
         >
           <FontAwesome6 name="camera" size={24} color="#FFF" />
         </TouchableOpacity>
+
+        {/* 语音面板（速记 + 语音查找） */}
+        <VoicePanel
+          visible={showVoicePanel}
+          categories={categories}
+          onClose={() => setShowVoicePanel(false)}
+          onSaved={fetchItems}
+        />
 
         {/* 极简快速保存 */}
         <QuickSaveModal
@@ -739,6 +758,21 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 12,
     elevation: 10,
+  },
+  voiceFab: {
+    position: 'absolute',
+    right: 28,
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    backgroundColor: '#3ECFCF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#3ECFCF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 8,
   },
   groupSection: {
     marginBottom: 22,

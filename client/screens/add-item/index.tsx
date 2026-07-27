@@ -124,17 +124,13 @@ export default function AddItemScreen() {
       Alert.alert('提示', '请选择分类');
       return;
     }
-    if (!photoKey) {
-      Alert.alert('提示', '请先拍照或选择照片');
-      return;
-    }
 
     setSaving(true);
     try {
       /**
        * 服务端文件：server/src/routes/items.ts
        * 接口：POST /api/v1/items
-       * Body 参数：name: string, category_id: number, location: string, tags: string, photo_key: string, note: string, expiry_date?: string（YYYY-MM-DD）
+       * Body 参数：name: string, category_id: number, location: string, tags: string, photo_key: string | null（可空）, note: string, expiry_date?: string（YYYY-MM-DD）
        */
       const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
         method: 'POST',

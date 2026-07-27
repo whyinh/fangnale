@@ -258,8 +258,8 @@ ${JSON.stringify(inventory)}
 router.post("/", async (req, res) => {
   const { name, category_id, location, tags, photo_key, note, expiry_date } = req.body;
 
-  if (!category_id || !photo_key) {
-    res.status(400).json({ error: "分类和照片为必填项" });
+  if (!category_id) {
+    res.status(400).json({ error: "分类为必填项" });
     return;
   }
 
@@ -268,7 +268,7 @@ router.post("/", async (req, res) => {
     category_id: Number(category_id),
     location: location || "",
     tags: tags || "",
-    photo_key,
+    photo_key: photo_key || null,
     note: note || "",
   };
   if (expiry_date && /^\d{4}-\d{2}-\d{2}$/.test(expiry_date)) {

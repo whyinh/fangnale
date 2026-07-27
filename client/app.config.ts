@@ -55,6 +55,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         }
       ],
       [
+        "expo-av",
+        {
+          "microphonePermission": `允许物品速记App使用您的麦克风，以便您通过语音快速记录和查找物品。`
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": `物品速记App需要访问您的位置以提供周边服务及导航功能。`

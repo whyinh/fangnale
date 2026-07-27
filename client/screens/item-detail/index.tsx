@@ -16,6 +16,8 @@ import { useFocusEffect } from 'expo-router';
 import { useSafeSearchParams, useSafeRouter } from '@/hooks/useSafeRouter';
 import { FontAwesome6 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import { createFormDataFile } from '@/utils';
 
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 const VIEWED_ITEMS_KEY = '@stashspot_viewed_items';
@@ -62,6 +64,7 @@ export default function ItemDetailScreen() {
   const [borrowModalVisible, setBorrowModalVisible] = useState(false);
   const [borrowName, setBorrowName] = useState('');
   const [borrowSaving, setBorrowSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const fetchItem = useCallback(async () => {
     if (!id) return;
@@ -107,6 +110,48 @@ export default function ItemDetailScreen() {
       fetchItem();
     }, [fetchItem])
   );
+
+  // 拍照/补拍：上传后更新物品照片并刷新
+  const handleTakePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('权限不足', '请允许使用相机后再拍照');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.8 });
+    if (result.canceled || !result.assets?.[0]) return;
+    setUploading(true);
+    try {
+      /**
+       * 服务端文件：server/src/routes/upload.ts
+       * 接口：POST /api/v1/upload/photo
+       * Body 参数（FormData）：photo: 图片文件
+       */
+      const formData = new FormData();
+      formData.append('photo', createFormDataFile(result.assets[0].uri, `item_${Date.now()}.jpg`, 'image/jpeg') as any);
+      const upRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo`, { method: 'POST', body: formData });
+      if (!upRes.ok) throw new Error('照片上传失败');
+      const upData = await upRes.json();
+
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：PUT /api/v1/items/:id
+       * Path 参数：id: number
+       * Body 参数：photo_key: string
+       */
+      const putRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photo_key: upData.photo_key }),
+      });
+      if (!putRes.ok) throw new Error('照片更新失败');
+      fetchItem();
+    } catch (e: any) {
+      Alert.alert('错误', e.message || '拍照保存失败，请重试');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleDelete = () => {
     Alert.alert(
@@ -242,9 +287,17 @@ export default function ItemDetailScreen() {
           {photoUrl ? (
             <Image source={{ uri: photoUrl }} style={styles.photo} />
           ) : (
-            <View style={styles.photoPlaceholder}>
-              <FontAwesome6 name="image" size={48} color="#B2BEC3" />
-            </View>
+            <TouchableOpacity style={styles.photoPlaceholder} onPress={handleTakePhoto} disabled={uploading} activeOpacity={0.7}>
+              {uploading ? (
+                <ActivityIndicator size="large" color="#6C63FF" />
+              ) : (
+                <>
+                  <FontAwesome6 name="camera" size={40} color="#6C63FF" />
+                  <Text style={styles.photoPlaceholderTitle}>还未拍照</Text>
+                  <Text style={styles.photoPlaceholderSub}>点击拍一张照片，找起来更方便</Text>
+                </>
+              )}
+            </TouchableOpacity>
           )}
         </View>
 
@@ -261,8 +314,8 @@ export default function ItemDetailScreen() {
               <TouchableOpacity style={styles.rephotoNoBtn} onPress={handleDismissRephoto}>
                 <Text style={styles.rephotoNoText}>不用了</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.rephotoYesBtn} onPress={handleDismissRephoto}>
-                <Text style={styles.rephotoYesText}>好的</Text>
+              <TouchableOpacity style={styles.rephotoYesBtn} onPress={() => { handleDismissRephoto(); handleTakePhoto(); }}>
+                <Text style={styles.rephotoYesText}>好的，重拍</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -565,6 +618,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8E8EB',
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 8,
+  },
+  photoPlaceholderTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2D3436',
+    marginTop: 4,
+  },
+  photoPlaceholderSub: {
+    fontSize: 13,
+    color: '#636E72',
   },
   rephotoPrompt: {
     backgroundColor: '#F0F0F3',

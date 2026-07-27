@@ -28,7 +28,7 @@ export const items = pgTable(
     category_id: integer("category_id").notNull().references(() => categories.id),
     location: varchar("location", { length: 200 }).notNull().default(""),
     tags: text("tags").notNull().default(""),
-    photo_key: text("photo_key").notNull(),
+    photo_key: text("photo_key"),
     note: text("note").notNull().default(""),
     borrowed_to: varchar("borrowed_to", { length: 100 }),
     borrowed_at: timestamp("borrowed_at", { withTimezone: true }),
