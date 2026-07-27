@@ -18,6 +18,7 @@ import { useAudioRecorder, useAudioRecorderState, RecordingPresets, requestRecor
 import type { AudioPlayer } from 'expo-audio';
 import { Feather } from '@expo/vector-icons';
 import EventSource from 'react-native-sse';
+import * as FileSystem from 'expo-file-system/legacy';
 import { createFormDataFile } from '@/utils';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
@@ -87,6 +88,7 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
   const playerRef = useRef<AudioPlayer | null>(null);
   const sseRef = useRef<EventSource | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recordCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // 录音中脉冲动画
@@ -109,6 +111,10 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
     if (recordTimerRef.current) {
       clearTimeout(recordTimerRef.current);
       recordTimerRef.current = null;
+    }
+    if (recordCheckTimerRef.current) {
+      clearTimeout(recordCheckTimerRef.current);
+      recordCheckTimerRef.current = null;
     }
     if (sseRef.current) {
       sseRef.current.close();
@@ -161,8 +167,22 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
         return;
       }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
       recorder.record();
       setPhase('recording');
+      // 启动校验：recorderState 每 500ms 轮询，1s 后仍未进入录音态说明启动失败
+      recordCheckTimerRef.current = setTimeout(() => {
+        recordCheckTimerRef.current = null;
+        if (!isRecordingRef.current) {
+          try {
+            recorder.stop().catch(() => undefined);
+          } catch {
+            // 忽略：recorder 可能未在录音
+          }
+          setPhase('idle');
+          setErrorText('录音启动失败，请重试');
+        }
+      }, 1000);
       // 最长 60 秒自动停止
       recordTimerRef.current = setTimeout(() => {
         stopRecording();
@@ -178,17 +198,31 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
       clearTimeout(recordTimerRef.current);
       recordTimerRef.current = null;
     }
+    if (recordCheckTimerRef.current) {
+      clearTimeout(recordCheckTimerRef.current);
+      recordCheckTimerRef.current = null;
+    }
     setPhase('processing');
     try {
       await recorder.stop();
       const uri = recorder.uri;
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => undefined);
-      if (uri) {
-        await processAudio(uri);
-      } else {
+      if (!uri) {
         setPhase('idle');
         setErrorText('录音无效，请重试');
+        return;
       }
+      // iOS 上偶发录音文件未落盘，先校验；再复制到应用缓存，防止上传前源文件被清理
+      const info = await (FileSystem as any).getInfoAsync(uri);
+      if (!info?.exists || !info?.size) {
+        console.error('recording file missing:', uri, info);
+        setPhase('idle');
+        setErrorText('录音未保存成功，请重试');
+        return;
+      }
+      const dest = `${(FileSystem as any).cacheDirectory}voice_${Date.now()}.m4a`;
+      await (FileSystem as any).copyAsync({ from: uri, to: dest });
+      await processAudio(dest);
     } catch (e) {
       console.error('stopRecording failed:', e);
       setPhase('idle');
