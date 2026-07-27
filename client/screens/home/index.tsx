@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -92,6 +92,15 @@ export default function HomeScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+
+  // 搜索防抖：停止输入 350ms 后才真正触发请求，避免逐字强制搜索打断输入
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery.trim());
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
   const [loading, setLoading] = useState(true);
   const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
   const [viewMode, setViewMode] = useState<ViewMode>('all');
@@ -121,7 +130,7 @@ export default function HomeScreen() {
       let url = `${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`;
       const params: string[] = [];
       if (selectedCategory) params.push(`category_id=${selectedCategory}`);
-      if (searchQuery) params.push(`search=${encodeURIComponent(searchQuery)}`);
+      if (debouncedQuery) params.push(`search=${encodeURIComponent(debouncedQuery)}`);
       if (params.length > 0) url += `?${params.join('&')}`;
 
       /**
@@ -163,7 +172,7 @@ export default function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  }, [selectedCategory, searchQuery]);
+  }, [selectedCategory, debouncedQuery]);
 
   useFocusEffect(
     useCallback(() => {
@@ -205,7 +214,8 @@ export default function HomeScreen() {
   );
 
   const handleSearch = () => {
-    fetchItems();
+    // 提交时立即同步防抖值，不等 350ms
+    setDebouncedQuery(searchQuery.trim());
   };
 
   // AI 问一问
