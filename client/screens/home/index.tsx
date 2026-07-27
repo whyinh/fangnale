@@ -95,6 +95,9 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   // 已提交的搜索词：只有用户主动点搜索键/搜索图标时才更新，输入过程绝不触发请求
   const [submittedQuery, setSubmittedQuery] = useState('');
+  // 智能搜索：字面匹配无结果时自动 fallback 到 AI 语义搜索
+  const [smartSearching, setSmartSearching] = useState(false);
+  const [smartMatched, setSmartMatched] = useState(false);
   const [loading, setLoading] = useState(true);
   const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
   const [viewMode, setViewMode] = useState<ViewMode>('all');
@@ -120,26 +123,10 @@ export default function HomeScreen() {
   }, []);
 
   const fetchItems = useCallback(async () => {
-    try {
-      setLoading(true);
-      let url = `${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`;
-      const params: string[] = [];
-      if (selectedCategory) params.push(`category_id=${selectedCategory}`);
-      if (submittedQuery) params.push(`search=${encodeURIComponent(submittedQuery)}`);
-      if (params.length > 0) url += `?${params.join('&')}`;
-
-      /**
-       * 服务端文件：server/src/routes/items.ts
-       * 接口：GET /api/v1/items
-       * Query 参数：category_id?: number, search?: string
-       */
-      const res = await fetch(url);
-      const data = await res.json();
-      setItems(data);
-
-      // 拉取物品照片的签名 URL
+    // 拉取物品照片的签名 URL
+    const fetchPhotoUrls = async (list: Item[]) => {
       const urlMap: Record<number, string> = {};
-      for (const item of data) {
+      for (const item of list) {
         if (item.photo_key && !photoUrls[item.id]) {
           try {
             /**
@@ -162,6 +149,59 @@ export default function HomeScreen() {
       if (Object.keys(urlMap).length > 0) {
         setPhotoUrls(prev => ({ ...prev, ...urlMap }));
       }
+    };
+
+    try {
+      setLoading(true);
+      setSmartMatched(false);
+      let url = `${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`;
+      const params: string[] = [];
+      if (selectedCategory) params.push(`category_id=${selectedCategory}`);
+      if (submittedQuery) params.push(`search=${encodeURIComponent(submittedQuery)}`);
+      if (params.length > 0) url += `?${params.join('&')}`;
+
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：GET /api/v1/items
+       * Query 参数：category_id?: number, search?: string
+       */
+      const res = await fetch(url);
+      const data = await res.json();
+
+      // 字面匹配无结果且有搜索词：自动 fallback 到 AI 语义搜索（同义词/类别推理）
+      if (Array.isArray(data) && data.length === 0 && submittedQuery) {
+        setLoading(false);
+        setSmartSearching(true);
+        try {
+          /**
+           * 服务端文件：server/src/routes/items.ts
+           * 接口：POST /api/v1/items/smart-search
+           * Body 参数：query: string
+           */
+          const smartRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/smart-search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: submittedQuery }),
+          });
+          const smartData = await smartRes.json();
+          if (Array.isArray(smartData) && smartData.length > 0) {
+            setItems(smartData);
+            setSmartMatched(true);
+            await fetchPhotoUrls(smartData);
+          } else {
+            setItems([]);
+          }
+        } catch (e) {
+          console.error('Smart search failed:', e);
+          setItems([]);
+        } finally {
+          setSmartSearching(false);
+        }
+        return;
+      }
+
+      setItems(data);
+      await fetchPhotoUrls(data);
     } catch (e) {
       console.error('Failed to fetch items:', e);
     } finally {
@@ -429,9 +469,12 @@ export default function HomeScreen() {
         />
 
         {/* 物品列表 / 位置分组 */}
-        {loading ? (
+        {loading || smartSearching ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#6C63FF" />
+            {smartSearching && (
+              <Text style={styles.smartSearchText}>字面没匹配到，AI 正在帮你联想…</Text>
+            )}
           </View>
         ) : displayItems.length === 0 && showExpiringOnly ? (
           <View style={styles.emptyContainer}>
@@ -444,10 +487,19 @@ export default function HomeScreen() {
         ) : items.length === 0 ? (
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconWrap}>
-              <FontAwesome6 name="camera" size={36} color="#6C63FF" />
+              <FontAwesome6 name={submittedQuery ? 'magnifying-glass' : 'camera'} size={36} color="#6C63FF" />
             </View>
-            <Text style={styles.emptyTitle}>还没有物品记录</Text>
-            <Text style={styles.emptySubtitle}>点右下角相机，拍一张就记好了</Text>
+            {submittedQuery ? (
+              <>
+                <Text style={styles.emptyTitle}>没有找到相关物品</Text>
+                <Text style={styles.emptySubtitle}>换个说法试试，或点搜索框右侧的魔法棒直接问 AI</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.emptyTitle}>还没有物品记录</Text>
+                <Text style={styles.emptySubtitle}>点右下角相机，拍一张就记好了</Text>
+              </>
+            )}
           </View>
         ) : viewMode === 'all' ? (
           <FlatList
@@ -717,6 +769,26 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  smartSearchText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#6C63FF',
+  },
+  smartHintBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(108,99,255,0.08)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  smartHintText: {
+    fontSize: 12,
+    color: '#6C63FF',
+    flex: 1,
   },
   emptyContainer: {
     flex: 1,

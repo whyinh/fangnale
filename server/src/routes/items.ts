@@ -223,7 +223,8 @@ router.post("/ask", async (req, res) => {
 ${JSON.stringify(inventory)}
 
 回答规则：
-- 只根据清单回答；清单中没有的物品，明确告诉用户"没有找到记录"，并建议先拍照记录
+- 用户可能用俗称、类别词或用途提问（如"证件"泛指护照/身份证/签证，"充电的"指充电器/数据线），请主动做同义词和类别联想推理，不要只做字面匹配；有合理推断就回答并简短说明（如"护照属于证件"）
+- 只根据清单回答；做了上述联想后仍没有相关物品的，明确告诉用户"没有找到记录"，并建议先拍照记录
 - 回答简短、口语化，直接给出物品名和存放位置（位置未填写就如实说明）
 - 如果物品已借出（借给字段不为空），必须提醒"已借给 XX"
 - 如果匹配物品的过期日临近（30 天内）或已过今天，顺带提醒一句
@@ -250,6 +251,89 @@ ${JSON.stringify(inventory)}
     res.write(`data: ${JSON.stringify({ error: "问答失败，请稍后重试" })}\n\n`);
     res.write("data: [DONE]\n\n");
     res.end();
+  }
+});
+
+// POST /api/v1/items/smart-search - AI 语义搜索（同义词/类别推理）
+// Body: { query: string }
+// 返回：与 GET / 结构一致的物品数组（按相关度排序）
+router.post("/smart-search", async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query || typeof query !== "string" || !query.trim()) {
+      res.status(400).json({ error: "请提供搜索词" });
+      return;
+    }
+
+    const { data: rows, error } = await client
+      .from("items")
+      .select("id, name, location, tags, note, categories(name)")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(`查询物品失败: ${error.message}`);
+    if (!rows || rows.length === 0) {
+      res.json([]);
+      return;
+    }
+
+    const inventory = rows.map((r) => {
+      const row = r as Record<string, unknown> & { categories?: { name?: string } | null };
+      return {
+        id: row.id,
+        名称: row.name,
+        位置: row.location || "",
+        分类: row.categories?.name || "",
+        标签: row.tags || "",
+        备注: row.note || "",
+      };
+    });
+
+    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as Record<string, string>);
+    const llm = new LLMClient(new Config(), customHeaders);
+    const response = await llm.invoke(
+      [
+        {
+          role: "system",
+          content: `你是物品搜索引擎。用户的搜索词与物品名称往往不是字面一致，请做同义词、俗称、类别归属、用途联想推理。例如："证件"可匹配护照/身份证/签证/驾驶证；"手机"可匹配 iPhone；"药"可匹配感冒药/创可贴；"充电"可匹配充电器/数据线/充电宝。宁多勿漏，明显无关的才排除。
+物品清单（JSON）：
+${JSON.stringify(inventory)}
+
+只输出 JSON：{"ids": [匹配物品的 id，按相关度从高到低，最多 10 个]}；确实没有匹配时输出 {"ids": []}。禁止输出任何其他文字。`,
+        },
+        { role: "user", content: query.trim().slice(0, 100) },
+      ],
+      { model: "doubao-seed-1-8-251228", temperature: 0.1 }
+    );
+
+    let ids: number[] = [];
+    try {
+      const parsed = extractJson(String(response.content || ""));
+      if (Array.isArray(parsed.ids)) {
+        ids = parsed.ids.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+      }
+    } catch {
+      ids = [];
+    }
+    if (ids.length === 0) {
+      res.json([]);
+      return;
+    }
+
+    // 按命中 id 查询完整物品数据（结构与 GET / 一致），并按相关度顺序返回
+    const { data: items, error: itemsError } = await client
+      .from("items")
+      .select("id, name, category_id, location, tags, photo_key, note, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
+      .in("id", ids.slice(0, 10));
+    if (itemsError) throw new Error(`查询物品详情失败: ${itemsError.message}`);
+
+    const order = new Map(ids.map((id, idx) => [id, idx]));
+    const sorted = (items || []).sort(
+      (a, b) => (order.get((a as { id: number }).id) ?? 999) - (order.get((b as { id: number }).id) ?? 999)
+    );
+    res.json(sorted);
+  } catch (e) {
+    console.error("POST /items/smart-search error:", e);
+    res.status(500).json({ error: "智能搜索失败，请重试" });
   }
 });
 
