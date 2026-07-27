@@ -14,6 +14,10 @@ interface AuthContextValue {
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
+  /** 发送手机号验证码（phone 为 11 位手机号，不含区号） */
+  sendPhoneOtp: (phone: string) => Promise<void>;
+  /** 校验手机验证码，成功即登录（手机号未注册则自动注册） */
+  verifyPhoneOtp: (phone: string, token: string) => Promise<void>;
   signOut: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
 }
@@ -77,6 +81,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.session?.user ?? null);
   }, []);
 
+  const sendPhoneOtp = useCallback(async (phone: string) => {
+    const supabase = await getSupabase();
+    const { error } = await supabase.auth.signInWithOtp({ phone: `+86${phone}` });
+    if (error) throw new Error(error.message);
+  }, []);
+
+  const verifyPhoneOtp = useCallback(async (phone: string, token: string) => {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.auth.verifyOtp({
+      phone: `+86${phone}`,
+      token,
+      type: 'sms',
+    });
+    if (error) throw new Error(error.message);
+    // 手动同步会话，确保路由守卫立即感知登录态
+    setSession(data.session);
+    setUser(data.session?.user ?? null);
+  }, []);
+
   const signOut = useCallback(async () => {
     const supabase = await getSupabase();
     await supabase.auth.signOut();
@@ -104,6 +127,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         signIn,
         signUp,
+        sendPhoneOtp,
+        verifyPhoneOtp,
         signOut,
         getAccessToken,
       }}

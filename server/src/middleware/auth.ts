@@ -35,7 +35,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       return;
     }
     req.userId = user.id;
-    req.userEmail = user.email || undefined;
+    // 邮箱用户取 email，手机用户回退到 phone（用于"谁记的"/成员列表展示）
+    req.userEmail = user.email || user.phone || undefined;
     next();
   } catch (e) {
     console.error("requireAuth error:", e);

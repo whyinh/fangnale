@@ -24,6 +24,7 @@ import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { useAuth } from '@/contexts/AuthContext';
 import { authFetch } from '@/utils/api';
+import { formatContact, contactAvatarText } from '@/utils/format';
 
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 
@@ -202,7 +203,8 @@ export default function ProfileScreen() {
     ]);
   };
 
-  const userInitial = (user?.email || '?').charAt(0).toUpperCase();
+  const myContact = user?.email || user?.phone || '';
+  const userInitial = contactAvatarText(myContact);
   const isOwner = family?.owner_id === user?.id;
 
   return (
@@ -218,7 +220,7 @@ export default function ProfileScreen() {
             </View>
             <View style={styles.userInfo}>
               <Text style={styles.userEmail} numberOfLines={1}>
-                {user?.email || '—'}
+                {formatContact(myContact) || '—'}
               </Text>
               <View style={styles.syncBadge}>
                 <FontAwesome6 name="cloud-arrow-up" size={11} color="#4CAF50" />
@@ -260,11 +262,11 @@ export default function ProfileScreen() {
                   <View key={m.id} style={styles.memberRow}>
                     <View style={[styles.memberAvatar, m.role === 'owner' && styles.ownerAvatar]}>
                       <Text style={[styles.memberAvatarText, m.role === 'owner' && styles.ownerAvatarText]}>
-                        {m.user_email.charAt(0).toUpperCase()}
+                        {contactAvatarText(m.user_email)}
                       </Text>
                     </View>
                     <Text style={styles.memberEmail} numberOfLines={1}>
-                      {m.user_email}
+                      {formatContact(m.user_email)}
                       {m.user_id === user?.id ? '（我）' : ''}
                     </Text>
                     {m.role === 'owner' && (

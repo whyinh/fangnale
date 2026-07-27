@@ -1,5 +1,6 @@
 import { authFetch } from '@/utils/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { contactLabel, contactAvatarText } from '@/utils/format';
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
@@ -90,7 +91,7 @@ function GroupItemCard({
       {showOwner ? (
         <View style={styles.ownerDot}>
           <Text style={styles.ownerDotText}>
-            {(item.owner_email || '?').charAt(0).toUpperCase()}
+            {contactAvatarText(item.owner_email)}
           </Text>
         </View>
       ) : null}
@@ -103,7 +104,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useSafeRouter();
   const { user } = useAuth();
-  const myEmail = user?.email ?? null;
+  const myEmail = user?.email || user?.phone || null;
   const [items, setItems] = useState<Item[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
@@ -337,7 +338,7 @@ export default function HomeScreen() {
           <View style={styles.locationRow}>
             <FontAwesome6 name="user" size={10} color="#6C63FF" />
             <Text style={styles.ownerText} numberOfLines={1}>
-              {item.owner_email.split('@')[0]} 记的
+              {contactLabel(item.owner_email)} 记的
             </Text>
           </View>
         ) : null}
@@ -935,15 +936,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 6,
     right: 6,
-    width: 20,
+    minWidth: 20,
     height: 20,
     borderRadius: 10,
+    paddingHorizontal: 4,
     backgroundColor: '#6C63FF',
     alignItems: 'center',
     justifyContent: 'center',
   },
   ownerDotText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#FFFFFF',
   },
