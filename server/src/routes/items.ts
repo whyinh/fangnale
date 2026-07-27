@@ -29,6 +29,30 @@ router.get("/", async (req, res) => {
   res.json(data);
 });
 
+// GET /api/v1/items/locations - 获取常用位置列表（按使用频次排序）
+// 静态路由必须定义在 /:id 动态路由之前
+router.get("/locations", async (_req, res) => {
+  const { data, error } = await client
+    .from("items")
+    .select("location")
+    .neq("location", "");
+  if (error) throw new Error(`查询位置失败: ${error.message}`);
+
+  // 统计各位置使用频次
+  const freq: Record<string, number> = {};
+  for (const row of data || []) {
+    const loc = (row.location || "").trim();
+    if (loc) freq[loc] = (freq[loc] || 0) + 1;
+  }
+
+  const locations = Object.entries(freq)
+    .map(([location, count]) => ({ location, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 12);
+
+  res.json(locations);
+});
+
 // GET /api/v1/items/:id - 获取单个物品详情
 router.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
@@ -46,17 +70,17 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST /api/v1/items - 创建物品
-// Body: { name: string, category_id: number, location?: string, tags?: string, photo_key: string, note?: string }
+// Body: { name?: string, category_id: number, location?: string, tags?: string, photo_key: string, note?: string }
 router.post("/", async (req, res) => {
   const { name, category_id, location, tags, photo_key, note } = req.body;
 
-  if (!name || !category_id || !photo_key) {
-    res.status(400).json({ error: "名称、分类和照片为必填项" });
+  if (!category_id || !photo_key) {
+    res.status(400).json({ error: "分类和照片为必填项" });
     return;
   }
 
   const payload = {
-    name,
+    name: name || "未命名物品",
     category_id: Number(category_id),
     location: location || "",
     tags: tags || "",

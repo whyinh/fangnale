@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,16 @@ import {
   Image,
   ActivityIndicator,
   Platform,
+  ScrollView,
+  Alert,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { useFocusEffect } from 'expo-router';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
+import { QuickSaveModal } from '@/components/QuickSaveModal';
 
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 
@@ -37,6 +41,37 @@ interface Item {
   categories: Category;
 }
 
+interface LocationGroup {
+  location: string;
+  items: Item[];
+}
+
+type ViewMode = 'all' | 'byLocation';
+
+// 位置分组内的小卡片（顶层组件，避免 Hooks 陷阱）
+function GroupItemCard({
+  item,
+  photoUrl,
+  onPress,
+}: {
+  item: Item;
+  photoUrl?: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.groupCard} onPress={onPress} activeOpacity={0.7}>
+      {photoUrl ? (
+        <Image source={{ uri: photoUrl }} style={styles.groupCardImage} />
+      ) : (
+        <View style={[styles.groupCardImage, styles.groupCardImagePlaceholder]}>
+          <FontAwesome6 name="image" size={20} color="#B2BEC3" />
+        </View>
+      )}
+      <Text style={styles.groupCardName} numberOfLines={1}>{item.name}</Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useSafeRouter();
@@ -46,9 +81,16 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
+  const [viewMode, setViewMode] = useState<ViewMode>('all');
+  const [quickSaveUri, setQuickSaveUri] = useState<string | null>(null);
+  const [quickSaveVisible, setQuickSaveVisible] = useState(false);
 
   const fetchCategories = useCallback(async () => {
     try {
+      /**
+       * 服务端文件：server/src/routes/categories.ts
+       * 接口：GET /api/v1/categories
+       */
       const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
       const data = await res.json();
       setCategories(data);
@@ -66,15 +108,25 @@ export default function HomeScreen() {
       if (searchQuery) params.push(`search=${encodeURIComponent(searchQuery)}`);
       if (params.length > 0) url += `?${params.join('&')}`;
 
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：GET /api/v1/items
+       * Query 参数：category_id?: number, search?: string
+       */
       const res = await fetch(url);
       const data = await res.json();
       setItems(data);
 
-      // Fetch photo URLs for items
+      // 拉取物品照片的签名 URL
       const urlMap: Record<number, string> = {};
       for (const item of data) {
         if (item.photo_key && !photoUrls[item.id]) {
           try {
+            /**
+             * 服务端文件：server/src/routes/upload.ts
+             * 接口：POST /api/v1/upload/photo-url
+             * Body 参数：key: string
+             */
             const photoRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo-url`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -104,12 +156,51 @@ export default function HomeScreen() {
     }, [fetchCategories, fetchItems])
   );
 
+  // 按位置分组
+  const locationGroups = useMemo<LocationGroup[]>(() => {
+    const map = new Map<string, Item[]>();
+    for (const item of items) {
+      const loc = item.location?.trim() || '未标记位置';
+      if (!map.has(loc)) map.set(loc, []);
+      map.get(loc)!.push(item);
+    }
+    const groups: LocationGroup[] = [];
+    for (const [location, groupItems] of map) {
+      groups.push({ location, items: groupItems });
+    }
+    groups.sort((a, b) => b.items.length - a.items.length);
+    return groups;
+  }, [items]);
+
   const handleSearch = () => {
     fetchItems();
   };
 
   const handleCategorySelect = (categoryId: number | null) => {
     setSelectedCategory(categoryId === selectedCategory ? null : categoryId);
+  };
+
+  // 一键拍照 → 弹出极简保存
+  const handleQuickCapture = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('权限不足', '需要相机权限才能拍照');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: false,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setQuickSaveUri(result.assets[0].uri);
+      setQuickSaveVisible(true);
+    }
+  };
+
+  const handleQuickSaved = () => {
+    fetchItems();
   };
 
   const renderItem = ({ item }: { item: Item }) => (
@@ -146,6 +237,36 @@ export default function HomeScreen() {
     </TouchableOpacity>
   );
 
+  const renderLocationGroup = ({ item: group }: { item: LocationGroup }) => (
+    <View style={styles.groupSection}>
+      <View style={styles.groupHeader}>
+        <View style={styles.groupHeaderLeft}>
+          <View style={styles.groupIconWrap}>
+            <FontAwesome6 name="map-pin" size={13} color="#6C63FF" />
+          </View>
+          <Text style={styles.groupTitle}>{group.location}</Text>
+        </View>
+        <Text style={styles.groupCount}>{group.items.length} 件</Text>
+      </View>
+      <View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.groupCards}
+        >
+          {group.items.map((item) => (
+            <GroupItemCard
+              key={item.id}
+              item={item}
+              photoUrl={photoUrls[item.id]}
+              onPress={() => router.push(`/item-detail`, { id: item.id })}
+            />
+          ))}
+        </ScrollView>
+      </View>
+    </View>
+  );
+
   return (
     <Screen safeAreaEdges={['left', 'right', 'bottom']} backgroundColor="#F0F0F3">
       <View style={{ flex: 1 }}>
@@ -155,7 +276,7 @@ export default function HomeScreen() {
           <Text style={styles.headerSubtitle}>你的物品，一目了然</Text>
         </View>
 
-        {/* Search Bar */}
+        {/* Search Bar + 视图切换 */}
         <View style={styles.searchContainer}>
           <View style={styles.searchBar}>
             <FontAwesome6 name="magnifying-glass" size={16} color="#B2BEC3" />
@@ -173,6 +294,28 @@ export default function HomeScreen() {
                 <FontAwesome6 name="xmark" size={16} color="#B2BEC3" />
               </TouchableOpacity>
             )}
+          </View>
+          <View style={styles.viewToggle}>
+            <TouchableOpacity
+              style={[styles.viewToggleBtn, viewMode === 'all' && styles.viewToggleBtnActive]}
+              onPress={() => setViewMode('all')}
+            >
+              <FontAwesome6
+                name="list"
+                size={13}
+                color={viewMode === 'all' ? '#FFF' : '#636E72'}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.viewToggleBtn, viewMode === 'byLocation' && styles.viewToggleBtnActive]}
+              onPress={() => setViewMode('byLocation')}
+            >
+              <FontAwesome6
+                name="map-pin"
+                size={13}
+                color={viewMode === 'byLocation' ? '#FFF' : '#636E72'}
+              />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -208,18 +351,20 @@ export default function HomeScreen() {
           )}
         />
 
-        {/* Items List */}
+        {/* 物品列表 / 位置分组 */}
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#6C63FF" />
           </View>
         ) : items.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <FontAwesome6 name="box-open" size={48} color="#B2BEC3" />
+            <View style={styles.emptyIconWrap}>
+              <FontAwesome6 name="camera" size={36} color="#6C63FF" />
+            </View>
             <Text style={styles.emptyTitle}>还没有物品记录</Text>
-            <Text style={styles.emptySubtitle}>点击下方 + 按钮添加你的第一个物品</Text>
+            <Text style={styles.emptySubtitle}>点右下角相机，拍一张就记好了</Text>
           </View>
-        ) : (
+        ) : viewMode === 'all' ? (
           <FlatList
             data={items}
             keyExtractor={(item) => String(item.id)}
@@ -227,7 +372,32 @@ export default function HomeScreen() {
             contentContainerStyle={styles.itemsList}
             showsVerticalScrollIndicator={false}
           />
+        ) : (
+          <FlatList
+            data={locationGroups}
+            keyExtractor={(group) => group.location}
+            renderItem={renderLocationGroup}
+            contentContainerStyle={styles.itemsList}
+            showsVerticalScrollIndicator={false}
+          />
         )}
+
+        {/* 浮动拍照按钮（FAB） */}
+        <TouchableOpacity
+          style={[styles.fab, { bottom: 92 + (Platform.OS === 'ios' ? insets.bottom : 0) }]}
+          onPress={handleQuickCapture}
+          activeOpacity={0.85}
+        >
+          <FontAwesome6 name="camera" size={24} color="#FFF" />
+        </TouchableOpacity>
+
+        {/* 极简快速保存 */}
+        <QuickSaveModal
+          visible={quickSaveVisible}
+          photoUri={quickSaveUri}
+          onClose={() => setQuickSaveVisible(false)}
+          onSaved={handleQuickSaved}
+        />
       </View>
     </Screen>
   );
@@ -250,10 +420,13 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   searchContainer: {
+    flexDirection: 'row',
     paddingHorizontal: 24,
     marginBottom: 12,
+    gap: 10,
   },
   searchBar: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#E8E8EB',
@@ -269,6 +442,23 @@ const styles = StyleSheet.create({
     color: '#2D3436',
     marginLeft: 10,
     padding: 0,
+  },
+  viewToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#E8E8EB',
+    borderRadius: 16,
+    padding: 4,
+    gap: 2,
+  },
+  viewToggleBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  viewToggleBtnActive: {
+    backgroundColor: '#6C63FF',
   },
   categoryList: {
     paddingHorizontal: 24,
@@ -291,7 +481,7 @@ const styles = StyleSheet.create({
   },
   itemsList: {
     paddingHorizontal: 24,
-    paddingBottom: 120,
+    paddingBottom: 160,
   },
   itemCard: {
     flexDirection: 'row',
@@ -323,7 +513,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 14,
     justifyContent: 'center',
-    gap: 4,
   },
   itemName: {
     fontSize: 16,
@@ -333,21 +522,22 @@ const styles = StyleSheet.create({
   locationRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
+    marginTop: 5,
   },
   itemLocation: {
     fontSize: 13,
     color: '#636E72',
+    flex: 1,
   },
   tagsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 6,
-    marginTop: 2,
+    marginTop: 7,
   },
   tag: {
     borderRadius: 9999,
-    paddingHorizontal: 10,
+    paddingHorizontal: 9,
     paddingVertical: 3,
   },
   tagText: {
@@ -363,17 +553,105 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingBottom: 100,
+    paddingHorizontal: 40,
+  },
+  emptyIconWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 28,
+    backgroundColor: 'rgba(108,99,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
   },
   emptyTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#2D3436',
-    marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,
     color: '#636E72',
     marginTop: 8,
+    textAlign: 'center',
+  },
+  fab: {
+    position: 'absolute',
+    right: 24,
+    width: 64,
+    height: 64,
+    borderRadius: 22,
+    backgroundColor: '#6C63FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  groupSection: {
+    marginBottom: 22,
+  },
+  groupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  groupHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  groupIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    backgroundColor: 'rgba(108,99,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  groupTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2D3436',
+  },
+  groupCount: {
+    fontSize: 12,
+    color: '#636E72',
+    fontWeight: '600',
+  },
+  groupCards: {
+    gap: 10,
+    paddingRight: 24,
+  },
+  groupCard: {
+    width: 120,
+    backgroundColor: '#F0F0F3',
+    borderRadius: 18,
+    padding: 8,
+    shadowColor: '#D1D9E6',
+    shadowOffset: { width: 3, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  groupCardImage: {
+    width: '100%',
+    height: 96,
+    borderRadius: 12,
+    backgroundColor: '#E8E8EB',
+  },
+  groupCardImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  groupCardName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2D3436',
+    marginTop: 8,
+    marginHorizontal: 2,
   },
 });
