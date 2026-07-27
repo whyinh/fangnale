@@ -108,7 +108,18 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
       if (data.category_id) {
         setSelectedCategory(data.category_id);
       }
+      // AI 自动创建了新分类时刷新分类列表，保证选择器能展示该选项
+      if (data.category_created) {
+        fetchCategories();
+      }
       setAiStatus('done');
+      if (data.category_name) {
+        Toast.show({
+          type: 'success',
+          text1: `已自动归类到「${data.category_name}」`,
+          text2: data.category_created ? '已为你创建新分类' : undefined,
+        });
+      }
     } catch (e) {
       console.error('Recognize failed, fallback to plain upload:', e);
       // 降级：识别接口不可用时走纯上传，不影响保存流程
@@ -233,7 +244,9 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
       if (!res.ok) throw new Error('保存失败');
 
       // 记住本次分类，下次自动选中
-      await AsyncStorage.setItem(LAST_CATEGORY_KEY, String(selectedCategory));
+      if (selectedCategory) {
+        await AsyncStorage.setItem(LAST_CATEGORY_KEY, String(selectedCategory));
+      }
 
       Toast.show({ type: 'success', text1: '存好了', text2: `${location.trim()}` });
       onSaved();

@@ -4,6 +4,7 @@ import multer from "multer";
 import { ASRClient, TTSClient, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "../storage/database/supabase-client";
 import { requireAuth, getVisibleOwnerIds } from "../middleware/auth.js";
+import { resolveCategoryId, type CategoryBrief } from "../utils/auto-category.js";
 
 const router = Router();
 const client = getSupabaseClient();
@@ -66,7 +67,7 @@ router.post("/voice-note", upload.single("audio"), async (req: Request, res: Res
 {
   "name": "物品名称（简洁，2-10个字）",
   "location": "存放位置（保留用户说的具体细节，如"书房抽屉第二层"；用户没说则为空字符串）",
-  "category": "从分类列表中原样选择最匹配的一个",
+  "category": "优先从分类列表中原样选择最匹配的一个；都不合适时给一个简洁的新大类名（2-4个字），系统会自动创建",
   "tags": ["1-3个物品特征标签，每个2-6个字"]
 }
 分类列表：${categoryNames.join("、")}
@@ -80,7 +81,8 @@ router.post("/voice-note", upload.single("audio"), async (req: Request, res: Res
     let name = "";
     let location = "";
     let tags: string[] = [];
-    let categoryId: number | null = cats?.[0]?.id ?? null;
+    let categoryId: number | null = null;
+    let categoryName = "";
     try {
       const parsed = extractJson(response.content);
       if (typeof parsed.name === "string") name = parsed.name.slice(0, 30);
@@ -88,19 +90,27 @@ router.post("/voice-note", upload.single("audio"), async (req: Request, res: Res
       if (Array.isArray(parsed.tags)) {
         tags = parsed.tags.filter((t): t is string => typeof t === "string").slice(0, 3);
       }
-      const matched =
-        (cats || []).find((c: { name: string }) => c.name === parsed.category) ||
-        (cats || []).find((c: { name: string }) =>
-          String(parsed.category || "").includes(c.name)
-        ) ||
-        (cats || []).find((c: { name: string }) => c.name === "其他") ||
-        cats?.[0];
-      if (matched) categoryId = matched.id;
-    } catch {
-      // 拆解失败时返回空草稿，由用户手动填写
+      // 精确/模糊匹配现有分类；匹配不上则按 AI 建议自动创建新分类
+      const resolved = await resolveCategoryId(
+        req.userId!,
+        (cats || []) as CategoryBrief[],
+        typeof parsed.category === "string" ? parsed.category : ""
+      );
+      categoryId = resolved.id;
+      categoryName = resolved.name;
+    } catch (resolveError) {
+      // 拆解或分类解析失败时兜底「其他」，仍返回草稿由用户确认
+      console.error("voice-note 分类解析失败，兜底其他:", resolveError);
+      try {
+        const fallback = await resolveCategoryId(req.userId!, (cats || []) as CategoryBrief[], "其他");
+        categoryId = fallback.id;
+        categoryName = fallback.name;
+      } catch (fallbackError) {
+        console.error("兜底分类创建失败:", fallbackError);
+      }
     }
 
-    res.json({ transcript, name, location, category_id: categoryId, tags });
+    res.json({ transcript, name, location, category_id: categoryId, category_name: categoryName, tags });
   } catch (error) {
     console.error("POST /speech/voice-note error:", error);
     res.status(500).json({ error: "语音识别失败，请重试" });

@@ -3,6 +3,7 @@ import multer from "multer";
 import { S3Storage, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "../storage/database/supabase-client.js";
 import { requireAuth, getVisibleOwnerIds, getFamilyMemberMap } from "../middleware/auth.js";
+import { resolveCategoryId, type CategoryBrief } from "../utils/auto-category.js";
 
 const router = Router();
 const client = getSupabaseClient();
@@ -138,14 +139,22 @@ router.post("/recognize", upload.single("photo"), async (req, res) => {
       contentType: mimetype,
     });
 
-    // 2. 查询现有分类（让 LLM 从中选择，保证分类匹配用户自己的分类体系）
-    const { data: cats } = await client.from("categories").select("id, name").order("id");
-    const categoryNames = (cats || []).map((c) => c.name);
+    // 2. 查询现有分类（仅自己+家庭成员的，让 LLM 从中选择，保证分类匹配用户自己的分类体系）
+    const visibleIds = await getVisibleOwnerIds(req.userId!);
+    const { data: catsRaw } = await client
+      .from("categories")
+      .select("id, name")
+      .in("owner_id", visibleIds)
+      .order("id");
+    const cats: CategoryBrief[] = (catsRaw || []) as CategoryBrief[];
+    const categoryNames = cats.map((c) => c.name);
 
-    // 3. 调用多模态 LLM 识别（失败降级：photo_key 已上传，识别字段用默认值）
+    // 3. 调用多模态 LLM 识别（失败降级：photo_key 已上传，识别字段用默认值，分类兜底「其他」）
     let name = "未命名物品";
     let tags: string[] = [];
-    let categoryId: number | null = cats && cats.length > 0 ? cats[0].id : null;
+    let categoryId: number | null = null;
+    let categoryName = "";
+    let categoryCreated = false;
 
     try {
       const customHeaders = HeaderUtils.extractForwardHeaders(
@@ -161,8 +170,8 @@ router.post("/recognize", upload.single("photo"), async (req, res) => {
         "要求：",
         '- name：物品本身的名称，简洁具体，2-8 个字（如"瑞士军刀""护照""电钻"），不要包含位置描述',
         "- tags：2-4 个描述物品特征或用途的标签，每个 2-6 个字",
-        `- category：必须从以下分类中原样选择一个：${categoryNames.join("、") || "其他"}`,
-        '- 如果照片模糊或无法辨认物品，name 返回"未识别物品"，tags 返回空数组，category 返回列表中的第一个分类',
+        `- category：优先从以下现有分类中原样选择一个：${categoryNames.join("、") || "（暂无分类）"}；如果都不合适，可以给一个简洁的新大类名（2-4个字，如"电子产品""衣物""证件"），系统会自动创建该分类`,
+        '- 如果照片模糊或无法辨认物品，name 返回"未识别物品"，tags 返回空数组，category 返回"其他"',
       ].join("\n");
 
       const response = await llm.invoke(
@@ -189,17 +198,38 @@ router.post("/recognize", upload.single("photo"), async (req, res) => {
           .slice(0, 4)
           .map((t) => t.trim().slice(0, 10));
       }
-      const matched =
-        (cats || []).find((c) => c.name === parsed.category) ??
-        (cats || []).find((c) => typeof parsed.category === "string" && parsed.category.includes(c.name)) ??
-        (cats || []).find((c) => c.name === "其他") ??
-        (cats || [])[0];
-      if (matched) categoryId = matched.id;
+      // 精确/模糊匹配现有分类；匹配不上则按 AI 建议自动创建新分类
+      const resolved = await resolveCategoryId(
+        req.userId!,
+        cats,
+        typeof parsed.category === "string" ? parsed.category : ""
+      );
+      categoryId = resolved.id;
+      categoryName = resolved.name;
+      categoryCreated = resolved.created;
     } catch (llmError) {
       console.error("LLM 识别失败，使用降级结果:", llmError);
     }
 
-    res.json({ photo_key: photoKey, name, tags, category_id: categoryId });
+    // LLM 失败或未给出分类时的最终兜底：归到「其他」（不存在则自动创建）
+    if (categoryId === null) {
+      try {
+        const fallback = await resolveCategoryId(req.userId!, cats, "其他");
+        categoryId = fallback.id;
+        categoryName = fallback.name;
+      } catch (fallbackError) {
+        console.error("兜底分类创建失败:", fallbackError);
+      }
+    }
+
+    res.json({
+      photo_key: photoKey,
+      name,
+      tags,
+      category_id: categoryId,
+      category_name: categoryName,
+      category_created: categoryCreated,
+    });
   } catch (error) {
     console.error("POST /items/recognize error:", error);
     res.status(500).json({ error: "识别失败，请重试" });
@@ -364,18 +394,36 @@ ${JSON.stringify(inventory)}
 });
 
 // POST /api/v1/items - 创建物品
-// Body: { name?: string, category_id: number, location?: string, tags?: string, photo_key: string, note?: string, expiry_date?: string }
+// Body: { name?: string, category_id?: number, location?: string, tags?: string, photo_key: string, note?: string, expiry_date?: string }
+// category_id 为空或不属于当前用户可见范围时，自动兜底到「其他」分类（不存在则创建）
 router.post("/", async (req, res) => {
   const { name, category_id, location, tags, photo_key, note, expiry_date } = req.body;
 
-  if (!category_id) {
-    res.status(400).json({ error: "分类为必填项" });
-    return;
+  let finalCategoryId = Number(category_id) || null;
+  if (finalCategoryId !== null) {
+    const visibleIds = await getVisibleOwnerIds(req.userId!);
+    const { data: owned } = await client
+      .from("categories")
+      .select("id")
+      .in("owner_id", visibleIds)
+      .eq("id", finalCategoryId)
+      .limit(1)
+      .maybeSingle();
+    if (!owned) finalCategoryId = null;
+  }
+  if (finalCategoryId === null) {
+    const { data: catsRaw } = await client
+      .from("categories")
+      .select("id, name")
+      .eq("owner_id", req.userId!)
+      .order("id");
+    const fallback = await resolveCategoryId(req.userId!, (catsRaw || []) as CategoryBrief[], "其他");
+    finalCategoryId = fallback.id;
   }
 
   const payload: Record<string, unknown> = {
     name: name || "未命名物品",
-    category_id: Number(category_id),
+    category_id: finalCategoryId,
     location: location || "",
     tags: tags || "",
     photo_key: photo_key || null,

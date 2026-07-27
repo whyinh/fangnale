@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { getSupabaseClient } from "../storage/database/supabase-client.js";
 import { requireAuth } from "../middleware/auth.js";
+import { ensureDefaultCategories } from "../utils/auto-category.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -19,6 +20,9 @@ router.get("/me", async (req: Request, res: Response) => {
     ]);
     if (claimItemsError) console.error("claim items error:", claimItemsError);
     if (claimCatsError) console.error("claim categories error:", claimCatsError);
+
+    // 新用户无任何分类时自动初始化默认分类（证件/电子/衣物等常见大类，免手动创建）
+    await ensureDefaultCategories(userId);
 
     // 家庭摘要
     const { data: membership } = await client
