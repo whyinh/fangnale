@@ -1,8 +1,12 @@
 import { Router } from "express";
 import multer from "multer";
 import { S3Storage } from "coze-coding-dev-sdk";
+import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
+
+// 上传接口均需登录
+router.use(requireAuth);
 
 const upload = multer({
   storage: multer.memoryStorage(),

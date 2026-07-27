@@ -1,3 +1,4 @@
+import { authFetch } from '@/utils/api';
 import React, { useState, useCallback } from 'react';
 import {
   View,
@@ -70,13 +71,13 @@ export default function ItemDetailScreen() {
     if (!id) return;
     try {
       setLoading(true);
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`);
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`);
       const data = await res.json();
       setItem(data);
 
       // Fetch photo URL
       if (data.photo_key) {
-        const photoRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo-url`, {
+        const photoRes = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo-url`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ key: data.photo_key }),
@@ -129,7 +130,7 @@ export default function ItemDetailScreen() {
        */
       const formData = new FormData();
       formData.append('photo', (await createFormDataFile(result.assets[0].uri, `item_${Date.now()}.jpg`, 'image/jpeg')) as any);
-      const upRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo`, { method: 'POST', body: formData });
+      const upRes = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo`, { method: 'POST', body: formData });
       if (!upRes.ok) throw new Error('照片上传失败');
       const upData = await upRes.json();
 
@@ -139,7 +140,7 @@ export default function ItemDetailScreen() {
        * Path 参数：id: number
        * Body 参数：photo_key: string
        */
-      const putRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
+      const putRes = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ photo_key: upData.photo_key }),
@@ -169,7 +170,7 @@ export default function ItemDetailScreen() {
                * 接口：DELETE /api/v1/items/:id
                * Path 参数：id: number
                */
-              await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
+              await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
                 method: 'DELETE',
               });
               router.back();
@@ -199,7 +200,7 @@ export default function ItemDetailScreen() {
        * Path 参数：id: number
        * Body 参数：borrowed_to: string, borrowed_at: string（ISO 格式）
        */
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -231,7 +232,7 @@ export default function ItemDetailScreen() {
              * Path 参数：id: number
              * Body 参数：borrowed_to: null, borrowed_at: null
              */
-            const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
+            const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ borrowed_to: null, borrowed_at: null }),

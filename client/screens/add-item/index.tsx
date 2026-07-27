@@ -1,3 +1,4 @@
+import { authFetch } from '@/utils/api';
 import React, { useState, useCallback } from 'react';
 import {
   View,
@@ -47,7 +48,7 @@ export default function AddItemScreen() {
 
   const fetchCategories = async () => {
     try {
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
       const data = await res.json();
       setCategories(data);
     } catch (e) {
@@ -101,7 +102,7 @@ export default function AddItemScreen() {
       const formData = new FormData();
       formData.append('file', file as any);
 
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo`, {
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo`, {
         method: 'POST',
         body: formData,
       });
@@ -132,7 +133,7 @@ export default function AddItemScreen() {
        * 接口：POST /api/v1/items
        * Body 参数：name: string, category_id: number, location: string, tags: string, photo_key: string | null（可空）, note: string, expiry_date?: string（YYYY-MM-DD）
        */
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

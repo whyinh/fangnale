@@ -3,9 +3,13 @@ import type { Request, Response } from "express";
 import multer from "multer";
 import { ASRClient, TTSClient, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "../storage/database/supabase-client";
+import { requireAuth, getVisibleOwnerIds } from "../middleware/auth.js";
 
 const router = Router();
 const client = getSupabaseClient();
+// 所有语音接口均需登录
+router.use(requireAuth);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 },
@@ -49,9 +53,11 @@ router.post("/voice-note", upload.single("audio"), async (req: Request, res: Res
     }
 
     // 2. 查询分类，LLM 拆解
+    const visibleIds = await getVisibleOwnerIds(req.userId!);
     const { data: cats } = await client
       .from("categories")
       .select("id, name")
+      .in("owner_id", visibleIds)
       .order("id", { ascending: true });
     const categoryNames = (cats || []).map((c: { name: string }) => c.name);
 

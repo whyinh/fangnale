@@ -1,3 +1,5 @@
+import { authFetch } from '@/utils/api';
+import { useAuth } from '@/contexts/AuthContext';
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
@@ -39,6 +41,7 @@ interface Item {
   tags: string;
   photo_key: string;
   note: string;
+  owner_email?: string;
   borrowed_to: string | null;
   borrowed_at: string | null;
   expiry_date: string | null;
@@ -67,11 +70,14 @@ function GroupItemCard({
   item,
   photoUrl,
   onPress,
+  myEmail,
 }: {
   item: Item;
   photoUrl?: string;
   onPress: () => void;
+  myEmail?: string | null;
 }) {
+  const showOwner = !!item.owner_email && item.owner_email !== myEmail;
   return (
     <TouchableOpacity style={styles.groupCard} onPress={onPress} activeOpacity={0.7}>
       {photoUrl ? (
@@ -81,6 +87,13 @@ function GroupItemCard({
           <FontAwesome6 name="image" size={20} color="#B2BEC3" />
         </View>
       )}
+      {showOwner ? (
+        <View style={styles.ownerDot}>
+          <Text style={styles.ownerDotText}>
+            {(item.owner_email || '?').charAt(0).toUpperCase()}
+          </Text>
+        </View>
+      ) : null}
       <Text style={styles.groupCardName} numberOfLines={1}>{item.name}</Text>
     </TouchableOpacity>
   );
@@ -89,6 +102,8 @@ function GroupItemCard({
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useSafeRouter();
+  const { user } = useAuth();
+  const myEmail = user?.email ?? null;
   const [items, setItems] = useState<Item[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
@@ -114,7 +129,7 @@ export default function HomeScreen() {
        * 服务端文件：server/src/routes/categories.ts
        * 接口：GET /api/v1/categories
        */
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
       const data = await res.json();
       setCategories(data);
     } catch (e) {
@@ -134,7 +149,7 @@ export default function HomeScreen() {
              * 接口：POST /api/v1/upload/photo-url
              * Body 参数：key: string
              */
-            const photoRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo-url`, {
+            const photoRes = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo-url`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ key: item.photo_key }),
@@ -165,7 +180,7 @@ export default function HomeScreen() {
        * 接口：GET /api/v1/items
        * Query 参数：category_id?: number, search?: string
        */
-      const res = await fetch(url);
+      const res = await authFetch(url);
       const data = await res.json();
 
       // 字面匹配无结果且有搜索词：自动 fallback 到 AI 语义搜索（同义词/类别推理）
@@ -178,7 +193,7 @@ export default function HomeScreen() {
            * 接口：POST /api/v1/items/smart-search
            * Body 参数：query: string
            */
-          const smartRes = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/smart-search`, {
+          const smartRes = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/smart-search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: submittedQuery }),
@@ -318,6 +333,14 @@ export default function HomeScreen() {
             <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
           </View>
         ) : null}
+        {item.owner_email && item.owner_email !== myEmail ? (
+          <View style={styles.locationRow}>
+            <FontAwesome6 name="user" size={10} color="#6C63FF" />
+            <Text style={styles.ownerText} numberOfLines={1}>
+              {item.owner_email.split('@')[0]} 记的
+            </Text>
+          </View>
+        ) : null}
         {item.tags ? (
           <View style={styles.tagsRow}>
             {item.tags.split(',').slice(0, 3).map((tag, idx) => (
@@ -352,6 +375,7 @@ export default function HomeScreen() {
             <GroupItemCard
               key={item.id}
               item={item}
+              myEmail={myEmail}
               photoUrl={photoUrls[item.id]}
               onPress={() => router.push(`/item-detail`, { id: item.id })}
             />
@@ -906,6 +930,27 @@ const styles = StyleSheet.create({
   groupCardImagePlaceholder: {
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  ownerDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#6C63FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ownerDotText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  ownerText: {
+    fontSize: 12,
+    color: '#6C63FF',
+    flexShrink: 1,
   },
   groupCardName: {
     fontSize: 13,

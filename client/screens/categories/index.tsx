@@ -1,3 +1,4 @@
+import { authFetch } from '@/utils/api';
 import React, { useState, useCallback } from 'react';
 import {
   View,
@@ -49,7 +50,7 @@ export default function CategoriesScreen() {
   const fetchCategories = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
       const data = await res.json();
       setCategories(data);
     } catch (e) {
@@ -97,7 +98,7 @@ export default function CategoriesScreen() {
                * 接口：DELETE /api/v1/categories/:id
                * Path 参数：id: number
                */
-              await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories/${category.id}`, {
+              await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories/${category.id}`, {
                 method: 'DELETE',
               });
               fetchCategories();
@@ -124,7 +125,7 @@ export default function CategoriesScreen() {
          * Path 参数：id: number
          * Body 参数：name: string, icon: string, color: string
          */
-        await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories/${editingCategory.id}`, {
+        await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories/${editingCategory.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: name.trim(), icon: selectedIcon, color: selectedColor }),
@@ -135,7 +136,7 @@ export default function CategoriesScreen() {
          * 接口：POST /api/v1/categories
          * Body 参数：name: string, icon: string, color: string
          */
-        await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`, {
+        await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: name.trim(), icon: selectedIcon, color: selectedColor }),

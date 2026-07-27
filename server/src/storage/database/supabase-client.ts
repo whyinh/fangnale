@@ -89,6 +89,18 @@ function getSupabaseServiceRoleKey(): string | undefined {
   return process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
 }
 
+/**
+ * 获取可公开给前端的 Supabase 配置（url + anonKey）
+ * anonKey 为公开密钥，可安全下发给客户端
+ */
+function getSupabasePublicConfig(): { url: string; anonKey: string } {
+  loadEnv();
+  return {
+    url: process.env.COZE_SUPABASE_URL || '',
+    anonKey: process.env.COZE_SUPABASE_ANON_KEY || '',
+  };
+}
+
 function getSupabaseClient(token?: string): SupabaseClient {
   const { url, anonKey } = getSupabaseCredentials();
 
@@ -125,4 +137,4 @@ function getSupabaseClient(token?: string): SupabaseClient {
   });
 }
 
-export { loadEnv, getSupabaseCredentials, getSupabaseServiceRoleKey, getSupabaseClient };
+export { loadEnv, getSupabaseCredentials, getSupabaseServiceRoleKey, getSupabaseClient, getSupabasePublicConfig };

@@ -1,14 +1,20 @@
 import { Router } from "express";
 import { getSupabaseClient } from "../storage/database/supabase-client.js";
+import { requireAuth, getVisibleOwnerIds } from "../middleware/auth.js";
 
 const router = Router();
 const client = getSupabaseClient();
 
+// 所有分类接口均需登录
+router.use(requireAuth);
+
 // GET /api/v1/categories - 获取所有分类
-router.get("/", async (_req, res) => {
+router.get("/", async (req, res) => {
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
   const { data, error } = await client
     .from("categories")
     .select("id, name, icon, color, created_at")
+    .in("owner_id", visibleIds)
     .order("created_at", { ascending: true });
   if (error) throw new Error(`查询分类失败: ${error.message}`);
   res.json(data);
@@ -22,7 +28,7 @@ router.post("/", async (req, res) => {
     res.status(400).json({ error: "分类名称不能为空" });
     return;
   }
-  const payload: Record<string, string> = { name };
+  const payload: Record<string, string> = { name, owner_id: req.userId! };
   if (icon) payload.icon = icon;
   if (color) payload.color = color;
 
@@ -49,20 +55,29 @@ router.put("/:id", async (req, res) => {
     return;
   }
 
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
   const { data, error } = await client
     .from("categories")
     .update(updates)
     .eq("id", id)
+    .in("owner_id", visibleIds)
     .select()
     .single();
-  if (error) throw new Error(`更新分类失败: ${error.message}`);
+  if (error) {
+    if (error.code === "PGRST116") {
+      res.status(404).json({ error: "分类不存在或无权限修改" });
+      return;
+    }
+    throw new Error(`更新分类失败: ${error.message}`);
+  }
   res.json(data);
 });
 
 // DELETE /api/v1/categories/:id - 删除分类
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
-  const { error } = await client.from("categories").delete().eq("id", id);
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
+  const { error } = await client.from("categories").delete().eq("id", id).in("owner_id", visibleIds);
   if (error) throw new Error(`删除分类失败: ${error.message}`);
   res.json({ success: true });
 });

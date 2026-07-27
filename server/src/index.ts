@@ -4,6 +4,17 @@ import categoriesRouter from "./routes/categories.js";
 import itemsRouter from "./routes/items.js";
 import uploadRouter from "./routes/upload.js";
 import speechRouter from "./routes/speech.js";
+import authRouter from "./routes/auth.js";
+import familiesRouter from "./routes/families.js";
+import { getSupabasePublicConfig } from "./storage/database/supabase-client.js";
+
+// 全局兜底：未捕获的 Promise 拒绝/异常只记录不崩溃
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
 
 const app = express();
 const port = process.env.PORT || 9091;
@@ -23,6 +34,13 @@ app.use("/api/v1/categories", categoriesRouter);
 app.use("/api/v1/items", itemsRouter);
 app.use("/api/v1/upload", uploadRouter);
 app.use("/api/v1/speech", speechRouter);
+app.use("/api/v1/auth", authRouter);
+
+// Supabase 公开配置（前端初始化 Auth 客户端用）
+app.get("/api/v1/supabase-config", (_req, res) => {
+  res.json(getSupabasePublicConfig());
+});
+app.use("/api/v1/families", familiesRouter);
 
 // Error handling middleware
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

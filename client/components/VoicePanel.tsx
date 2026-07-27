@@ -1,3 +1,4 @@
+import { authFetch } from '@/utils/api';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
@@ -258,7 +259,7 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
        */
       const formData = new FormData();
       formData.append('audio', (await createFormDataFile(uri, `voice_${Date.now()}.m4a`, 'audio/m4a')) as any);
-      const res = await fetch(`${BASE}/api/v1/speech/voice-note`, { method: 'POST', body: formData });
+      const res = await authFetch(`${BASE}/api/v1/speech/voice-note`, { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '识别失败');
       setTranscript(data.transcript || '');
@@ -283,7 +284,7 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
        */
       const formData = new FormData();
       formData.append('audio', (await createFormDataFile(uri, `voice_${Date.now()}.m4a`, 'audio/m4a')) as any);
-      const res = await fetch(`${BASE}/api/v1/speech/transcribe`, { method: 'POST', body: formData });
+      const res = await authFetch(`${BASE}/api/v1/speech/transcribe`, { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '识别失败');
       const question = (data.transcript || '').trim();
@@ -366,7 +367,7 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
        * Body 参数：text: string
        * 返回：{ audio_url: string }
        */
-      const res = await fetch(`${BASE}/api/v1/speech/tts`, {
+      const res = await authFetch(`${BASE}/api/v1/speech/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
@@ -415,7 +416,7 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
        * 接口：POST /api/v1/items
        * Body 参数：name: string, location: string, category_id: number, tags?: string
        */
-      const res = await fetch(`${BASE}/api/v1/items`, {
+      const res = await authFetch(`${BASE}/api/v1/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

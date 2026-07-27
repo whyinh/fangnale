@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { FontAwesome6 } from '@expo/vector-icons';
 import EventSource from 'react-native-sse';
+import { getAuthHeaders } from '@/utils/api';
 
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 
@@ -27,50 +28,60 @@ export default function AskModal({ question, onClose }: AskModalProps) {
   useEffect(() => {
     if (!question.trim()) return;
 
-    /**
-     * 服务端文件：server/src/routes/items.ts
-     * 接口：POST /api/v1/items/ask（SSE 流式输出）
-     * Body 参数：question: string
-     * 事件格式：data: {"delta": "..."}，结束标志 data: [DONE]
-     */
-    const sse = new EventSource(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/ask`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: question.trim() }),
-    });
-    sseRef.current = sse;
+    let cancelled = false;
 
-    sse.addEventListener('message', (event) => {
+    const connect = async () => {
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：POST /api/v1/items/ask（SSE 流式输出）
+       * Body 参数：question: string
+       * Header：x-session（登录态 token）
+       * 事件格式：data: {"delta": "..."}，结束标志 data: [DONE]
+       */
+      const authHeaders = await getAuthHeaders();
+      if (cancelled) return;
+      const sse = new EventSource(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ question: question.trim() }),
+      });
+      sseRef.current = sse;
+
+      sse.addEventListener('message', (event) => {
       if (!event.data) return;
       if (event.data === '[DONE]') {
         setStatus('done');
         sse.close();
         return;
       }
-      try {
-        const parsed = JSON.parse(event.data);
-        if (parsed.error) {
-          setAnswer(parsed.error);
-          setStatus('error');
-          sse.close();
-          return;
+        try {
+          const parsed = JSON.parse(event.data);
+          if (parsed.error) {
+            setAnswer(parsed.error);
+            setStatus('error');
+            sse.close();
+            return;
+          }
+          if (parsed.delta) {
+            setAnswer((prev) => prev + parsed.delta);
+          }
+        } catch {
+          // 忽略非 JSON 片段
         }
-        if (parsed.delta) {
-          setAnswer((prev) => prev + parsed.delta);
-        }
-      } catch {
-        // 忽略非 JSON 片段
-      }
-    });
+      });
 
-    sse.addEventListener('error', () => {
-      setStatus((prev) => (prev === 'streaming' ? 'error' : prev));
-      setAnswer((prev) => prev || '连接失败，请检查网络后重试');
-      sse.close();
-    });
+      sse.addEventListener('error', () => {
+        setStatus((prev) => (prev === 'streaming' ? 'error' : prev));
+        setAnswer((prev) => prev || '连接失败，请检查网络后重试');
+        sse.close();
+      });
+    };
+
+    connect();
 
     return () => {
-      sse.close();
+      cancelled = true;
+      sseRef.current?.close();
       sseRef.current = null;
     };
   }, [question]);

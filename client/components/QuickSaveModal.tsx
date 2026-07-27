@@ -1,3 +1,4 @@
+import { authFetch } from '@/utils/api';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -89,7 +90,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
        * Body 参数：photo: File (FormData)
        * 返回：{ photo_key: string, name: string, tags: string[], category_id: number | null }
        */
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/recognize`, {
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/recognize`, {
         method: 'POST',
         body: formData,
       });
@@ -128,7 +129,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
        * 接口：POST /api/v1/upload/photo
        * Body 参数：file: File (FormData)
        */
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo`, {
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo`, {
         method: 'POST',
         body: formData,
       });
@@ -146,7 +147,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
        * 服务端文件：server/src/routes/categories.ts
        * 接口：GET /api/v1/categories
        */
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
       const data = await res.json();
       setCategories(data);
 
@@ -170,7 +171,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
        * 服务端文件：server/src/routes/items.ts
        * 接口：GET /api/v1/items/locations
        */
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/locations`);
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/locations`);
       const data = await res.json();
       setFrequentLocations(data);
     } catch (e) {
@@ -216,7 +217,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
        * 接口：POST /api/v1/items
        * Body 参数：name: string, category_id: number, location: string, tags: string, photo_key: string, note: string
        */
-      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -2,9 +2,13 @@ import { Router } from "express";
 import multer from "multer";
 import { S3Storage, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "../storage/database/supabase-client.js";
+import { requireAuth, getVisibleOwnerIds, getFamilyEmailMap } from "../middleware/auth.js";
 
 const router = Router();
 const client = getSupabaseClient();
+
+// 所有物品接口均需登录
+router.use(requireAuth);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -30,10 +34,12 @@ function extractJson(text: string): Record<string, unknown> {
 // Query: { category_id?: number, search?: string }
 router.get("/", async (req, res) => {
   const { category_id, search } = req.query;
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
 
   let query = client
     .from("items")
-    .select("id, name, category_id, location, tags, photo_key, note, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
+    .select("id, name, category_id, location, tags, photo_key, note, owner_id, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
+    .in("owner_id", visibleIds)
     .order("created_at", { ascending: false });
 
   if (category_id) {
@@ -48,15 +54,23 @@ router.get("/", async (req, res) => {
 
   const { data, error } = await query.limit(100);
   if (error) throw new Error(`查询物品失败: ${error.message}`);
-  res.json(data);
+  // 家庭场景：补充归属人邮箱，前端展示"谁记的"
+  const emailMap = await getFamilyEmailMap(req.userId!);
+  const items = (data || []).map((item) => ({
+    ...item,
+    owner_email: emailMap[(item as { owner_id?: string }).owner_id || ""] || null,
+  }));
+  res.json(items);
 });
 
 // GET /api/v1/items/locations - 获取常用位置列表（按使用频次排序）
 // 静态路由必须定义在 /:id 动态路由之前
-router.get("/locations", async (_req, res) => {
+router.get("/locations", async (req, res) => {
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
   const { data, error } = await client
     .from("items")
     .select("location")
+    .in("owner_id", visibleIds)
     .neq("location", "");
   if (error) throw new Error(`查询位置失败: ${error.message}`);
 
@@ -78,12 +92,20 @@ router.get("/locations", async (_req, res) => {
 // GET /api/v1/items/:id - 获取单个物品详情
 router.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
   const { data, error } = await client
     .from("items")
     .select("id, name, category_id, location, tags, photo_key, note, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
     .eq("id", id)
+    .in("owner_id", visibleIds)
     .single();
-  if (error) throw new Error(`查询物品失败: ${error.message}`);
+  if (error) {
+    if (error.code === "PGRST116") {
+      res.status(404).json({ error: "物品不存在" });
+      return;
+    }
+    throw new Error(`查询物品失败: ${error.message}`);
+  }
   if (!data) {
     res.status(404).json({ error: "物品不存在" });
     return;
@@ -354,6 +376,7 @@ router.post("/", async (req, res) => {
     tags: tags || "",
     photo_key: photo_key || null,
     note: note || "",
+    owner_id: req.userId!,
   };
   if (expiry_date && /^\d{4}-\d{2}-\d{2}$/.test(expiry_date)) {
     payload.expiry_date = expiry_date;
@@ -403,20 +426,29 @@ router.put("/:id", async (req, res) => {
     return;
   }
 
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
   const { data, error } = await client
     .from("items")
     .update(updates)
     .eq("id", id)
+    .in("owner_id", visibleIds)
     .select()
     .single();
-  if (error) throw new Error(`更新物品失败: ${error.message}`);
+  if (error) {
+    if (error.code === "PGRST116") {
+      res.status(404).json({ error: "物品不存在或无权限修改" });
+      return;
+    }
+    throw new Error(`更新物品失败: ${error.message}`);
+  }
   res.json(data);
 });
 
 // DELETE /api/v1/items/:id - 删除物品
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
-  const { error } = await client.from("items").delete().eq("id", id);
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
+  const { error } = await client.from("items").delete().eq("id", id).in("owner_id", visibleIds);
   if (error) throw new Error(`删除物品失败: ${error.message}`);
   res.json({ success: true });
 });
