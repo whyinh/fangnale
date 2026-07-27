@@ -1,4 +1,4 @@
-import { authFetch } from '@/utils/api';
+import { authFetch, getAuthHeaders } from '@/utils/api';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
@@ -303,7 +303,7 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
   };
 
   // ============ 问位置：SSE 流式回答 + TTS 播报 ============
-  const streamAskAnswer = (question: string) => {
+  const streamAskAnswer = async (question: string) => {
     setAskAnswer('');
     setAskStreaming(true);
     let fullAnswer = '';
@@ -311,10 +311,12 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
      * 服务端文件：server/src/routes/items.ts
      * 接口：POST /api/v1/items/ask（SSE 流式）
      * Body 参数：question: string
+     * Header：x-session（登录态 token）
      */
+    const authHeaders = await getAuthHeaders();
     const sse = new EventSource(`${BASE}/api/v1/items/ask`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({ question }),
     });
     sseRef.current = sse;
