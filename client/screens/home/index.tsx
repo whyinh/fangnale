@@ -437,14 +437,16 @@ export default function HomeScreen() {
         )}
 
         {/* Category Filter */}
-        <FlatList
-          data={categories}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          keyExtractor={(item) => String(item.id)}
-          contentContainerStyle={styles.categoryList}
-          renderItem={({ item }) => (
+        <View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentInsetAdjustmentBehavior="never"
+            contentContainerStyle={styles.categoryList}
+          >
+            {categories.map((item) => (
             <TouchableOpacity
+              key={String(item.id)}
               style={[
                 styles.categoryChip,
                 selectedCategory === item.id && { backgroundColor: item.color },
@@ -465,8 +467,9 @@ export default function HomeScreen() {
                 {item.name}
               </Text>
             </TouchableOpacity>
-          )}
-        />
+            ))}
+          </ScrollView>
+        </View>
 
         {/* 物品列表 / 位置分组 */}
         {loading || smartSearching ? (
@@ -653,7 +656,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8E8EB',
     borderRadius: 16,
     paddingHorizontal: 16,
-    paddingVertical: Platform.OS === 'web' ? 12 : 10,
+    height: 48,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.6)',
   },
@@ -663,6 +666,7 @@ const styles = StyleSheet.create({
     color: '#2D3436',
     marginLeft: 10,
     padding: 0,
+    lineHeight: 20,
   },
   viewToggle: {
     flexDirection: 'row',
