@@ -180,17 +180,90 @@ router.post("/recognize", upload.single("photo"), async (req, res) => {
   }
 });
 
+// POST /api/v1/items/ask - AI 自然语言查找（SSE 流式输出）
+// Body: { question: string }
+router.post("/ask", async (req, res) => {
+  const { question } = req.body;
+  if (!question || typeof question !== "string" || !question.trim()) {
+    res.status(400).json({ error: "请提供问题" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-store, no-transform, must-revalidate");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  try {
+    const { data: rows, error } = await client
+      .from("items")
+      .select("id, name, location, tags, note, borrowed_to, expiry_date, created_at, categories(name)")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(`查询物品失败: ${error.message}`);
+
+    const inventory = (rows || []).map((r) => {
+      const row = r as Record<string, unknown> & { categories?: { name?: string } | null };
+      return {
+        名称: row.name,
+        位置: row.location || "未填写",
+        分类: row.categories?.name || "未分类",
+        标签: row.tags || "无",
+        备注: row.note || "无",
+        借给: row.borrowed_to || null,
+        过期日: row.expiry_date || null,
+      };
+    });
+
+    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as Record<string, string>);
+    const llm = new LLMClient(new Config(), customHeaders);
+    const today = new Date().toISOString().slice(0, 10);
+    const systemPrompt = `你是家庭物品查找助手。今天是${today}。用户用自然语言问你东西放在哪里，请根据下方物品清单 JSON 回答。
+物品清单（JSON）：
+${JSON.stringify(inventory)}
+
+回答规则：
+- 只根据清单回答；清单中没有的物品，明确告诉用户"没有找到记录"，并建议先拍照记录
+- 回答简短、口语化，直接给出物品名和存放位置（位置未填写就如实说明）
+- 如果物品已借出（借给字段不为空），必须提醒"已借给 XX"
+- 如果匹配物品的过期日临近（30 天内）或已过今天，顺带提醒一句
+- 多个匹配时全部列出；用户问"某位置有什么"时列出该位置所有物品
+- 全程不超过 120 字，不要用 markdown 格式`;
+
+    const stream = llm.stream(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: question.trim().slice(0, 200) },
+      ],
+      { model: "doubao-seed-1-8-251228", temperature: 0.3 }
+    );
+
+    for await (const chunk of stream) {
+      if (chunk.content) {
+        res.write(`data: ${JSON.stringify({ delta: chunk.content.toString() })}\n\n`);
+      }
+    }
+    res.write("data: [DONE]\n\n");
+    res.end();
+  } catch (e) {
+    console.error("POST /items/ask error:", e);
+    res.write(`data: ${JSON.stringify({ error: "问答失败，请稍后重试" })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+  }
+});
+
 // POST /api/v1/items - 创建物品
-// Body: { name?: string, category_id: number, location?: string, tags?: string, photo_key: string, note?: string }
+// Body: { name?: string, category_id: number, location?: string, tags?: string, photo_key: string, note?: string, expiry_date?: string }
 router.post("/", async (req, res) => {
-  const { name, category_id, location, tags, photo_key, note } = req.body;
+  const { name, category_id, location, tags, photo_key, note, expiry_date } = req.body;
 
   if (!category_id || !photo_key) {
     res.status(400).json({ error: "分类和照片为必填项" });
     return;
   }
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     name: name || "未命名物品",
     category_id: Number(category_id),
     location: location || "",
@@ -198,6 +271,9 @@ router.post("/", async (req, res) => {
     photo_key,
     note: note || "",
   };
+  if (expiry_date && /^\d{4}-\d{2}-\d{2}$/.test(expiry_date)) {
+    payload.expiry_date = expiry_date;
+  }
 
   const { data, error } = await client
     .from("items")
@@ -209,7 +285,7 @@ router.post("/", async (req, res) => {
 });
 
 // PUT /api/v1/items/:id - 更新物品
-// Body: { name?: string, category_id?: number, location?: string, tags?: string, photo_key?: string, note?: string }
+// Body: { name?: string, category_id?: number, location?: string, tags?: string, photo_key?: string, note?: string, borrowed_to?: string | null, expiry_date?: string | null }
 router.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const updates: Record<string, unknown> = {};
@@ -220,6 +296,22 @@ router.put("/:id", async (req, res) => {
   if (req.body.tags !== undefined) updates.tags = req.body.tags;
   if (req.body.photo_key !== undefined) updates.photo_key = req.body.photo_key;
   if (req.body.note !== undefined) updates.note = req.body.note;
+  if (req.body.expiry_date !== undefined) {
+    updates.expiry_date =
+      req.body.expiry_date && /^\d{4}-\d{2}-\d{2}$/.test(req.body.expiry_date)
+        ? req.body.expiry_date
+        : null;
+  }
+  // borrowed_to 传 null 表示归还（同时清空借出时间）
+  if (req.body.borrowed_to !== undefined) {
+    if (req.body.borrowed_to === null || req.body.borrowed_to === "") {
+      updates.borrowed_to = null;
+      updates.borrowed_at = null;
+    } else {
+      updates.borrowed_to = String(req.body.borrowed_to).slice(0, 100);
+      updates.borrowed_at = new Date().toISOString();
+    }
+  }
   updates.updated_at = new Date().toISOString();
 
   if (Object.keys(updates).length <= 1) {

@@ -34,6 +34,7 @@ export default function AddItemScreen() {
   const [location, setLocation] = useState('');
   const [tags, setTags] = useState('');
   const [note, setNote] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoKey, setPhotoKey] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -133,7 +134,7 @@ export default function AddItemScreen() {
       /**
        * 服务端文件：server/src/routes/items.ts
        * 接口：POST /api/v1/items
-       * Body 参数：name: string, category_id: number, location: string, tags: string, photo_key: string, note: string
+       * Body 参数：name: string, category_id: number, location: string, tags: string, photo_key: string, note: string, expiry_date?: string（YYYY-MM-DD）
        */
       const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
         method: 'POST',
@@ -145,6 +146,7 @@ export default function AddItemScreen() {
           tags: tags.trim(),
           photo_key: photoKey,
           note: note.trim(),
+          ...(expiryDate ? { expiry_date: expiryDate } : {}),
         }),
       });
 
@@ -312,6 +314,50 @@ export default function AddItemScreen() {
           </View>
         </View>
 
+        {/* 过期日期（选填） */}
+        <View style={styles.fieldGroup}>
+          <Text style={styles.fieldLabel}>到期日（选填，药品/食品/证件适用）</Text>
+          <View style={styles.expiryQuickRow}>
+            {[
+              { label: '7天后', days: 7 },
+              { label: '30天后', days: 30 },
+              { label: '半年后', days: 182 },
+              { label: '一年后', days: 365 },
+            ].map((opt) => (
+              <TouchableOpacity
+                key={opt.label}
+                style={styles.expiryQuickChip}
+                onPress={() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + opt.days);
+                  const y = d.getFullYear();
+                  const m = String(d.getMonth() + 1).padStart(2, '0');
+                  const day = String(d.getDate()).padStart(2, '0');
+                  setExpiryDate(`${y}-${m}-${day}`);
+                }}
+              >
+                <Text style={styles.expiryQuickChipText}>{opt.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <View style={styles.inputContainer}>
+            <FontAwesome6 name="hourglass-half" size={14} color="#B2BEC3" />
+            <TextInput
+              style={styles.input}
+              placeholder="YYYY-MM-DD，如 2026-12-31"
+              placeholderTextColor="#B2BEC3"
+              value={expiryDate}
+              onChangeText={setExpiryDate}
+              maxLength={10}
+            />
+            {expiryDate ? (
+              <TouchableOpacity onPress={() => setExpiryDate('')}>
+                <FontAwesome6 name="xmark" size={14} color="#B2BEC3" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </View>
+
         {/* Save Button */}
         <TouchableOpacity
           style={[styles.saveButton, (saving || uploading) && styles.saveButtonDisabled]}
@@ -330,6 +376,14 @@ export default function AddItemScreen() {
 }
 
 const styles = StyleSheet.create({
+  expiryQuickRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  expiryQuickChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: '#E8E8EB',
+  },
+  expiryQuickChipText: { fontSize: 13, color: '#636E72', fontWeight: '600' },
   container: {
     paddingHorizontal: 24,
     paddingTop: 16,

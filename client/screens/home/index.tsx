@@ -19,6 +19,7 @@ import { FontAwesome6 } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { QuickSaveModal } from '@/components/QuickSaveModal';
+import AskModal from '@/components/AskModal';
 
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 
@@ -37,8 +38,20 @@ interface Item {
   tags: string;
   photo_key: string;
   note: string;
+  borrowed_to: string | null;
+  borrowed_at: string | null;
+  expiry_date: string | null;
   created_at: string;
   categories: Category;
+}
+
+// 计算距过期天数（负数表示已过期）
+function daysUntilExpiry(dateStr?: string | null): number | null {
+  if (!dateStr) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(`${dateStr}T00:00:00`);
+  return Math.ceil((target.getTime() - today.getTime()) / 86400000);
 }
 
 interface LocationGroup {
@@ -84,6 +97,9 @@ export default function HomeScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('all');
   const [quickSaveUri, setQuickSaveUri] = useState<string | null>(null);
   const [quickSaveVisible, setQuickSaveVisible] = useState(false);
+  const [askVisible, setAskVisible] = useState(false);
+  const [askQuestion, setAskQuestion] = useState('');
+  const [showExpiringOnly, setShowExpiringOnly] = useState(false);
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -172,8 +188,35 @@ export default function HomeScreen() {
     return groups;
   }, [items]);
 
+  // 临期物品（30 天内到期或已过期）
+  const expiringItems = useMemo(
+    () =>
+      items.filter((i) => {
+        const d = daysUntilExpiry(i.expiry_date);
+        return d !== null && d <= 30;
+      }),
+    [items]
+  );
+
+  // 列表数据源（临期筛选时只看临期物品）
+  const displayItems = useMemo(
+    () => (showExpiringOnly ? expiringItems : items),
+    [showExpiringOnly, expiringItems, items]
+  );
+
   const handleSearch = () => {
     fetchItems();
+  };
+
+  // AI 问一问
+  const handleAsk = () => {
+    const q = searchQuery.trim();
+    if (!q) {
+      Alert.alert('问一问', '先在搜索框输入你的问题，例如：\n\n我的护照放在哪？\n书房里有什么？\n什么东西快过期了？');
+      return;
+    }
+    setAskQuestion(q);
+    setAskVisible(true);
   };
 
   const handleCategorySelect = (categoryId: number | null) => {
@@ -216,6 +259,12 @@ export default function HomeScreen() {
           <FontAwesome6 name="image" size={24} color="#B2BEC3" />
         </View>
       )}
+      {item.borrowed_to ? (
+        <View style={styles.borrowedBadge}>
+          <FontAwesome6 name="hand-holding" size={9} color="#FFF" />
+          <Text style={styles.borrowedBadgeText}>借出</Text>
+        </View>
+      ) : null}
       <View style={styles.itemInfo}>
         <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
         {item.location ? (
@@ -276,13 +325,13 @@ export default function HomeScreen() {
           <Text style={styles.headerSubtitle}>你的物品，一目了然</Text>
         </View>
 
-        {/* Search Bar + 视图切换 */}
+        {/* Search Bar + AI 问 + 视图切换 */}
         <View style={styles.searchContainer}>
           <View style={styles.searchBar}>
             <FontAwesome6 name="magnifying-glass" size={16} color="#B2BEC3" />
             <TextInput
               style={styles.searchInput}
-              placeholder="搜索物品名称、位置、标签..."
+              placeholder="搜物品，或问：我的护照在哪..."
               placeholderTextColor="#B2BEC3"
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -295,6 +344,9 @@ export default function HomeScreen() {
               </TouchableOpacity>
             )}
           </View>
+          <TouchableOpacity style={styles.askBtn} onPress={handleAsk} activeOpacity={0.8}>
+            <FontAwesome6 name="wand-magic-sparkles" size={15} color="#FFF" />
+          </TouchableOpacity>
           <View style={styles.viewToggle}>
             <TouchableOpacity
               style={[styles.viewToggleBtn, viewMode === 'all' && styles.viewToggleBtnActive]}
@@ -318,6 +370,23 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* 临期提醒横幅 */}
+        {expiringItems.length > 0 && (
+          <TouchableOpacity
+            style={[styles.expiringBanner, showExpiringOnly && styles.expiringBannerActive]}
+            onPress={() => setShowExpiringOnly(prev => !prev)}
+            activeOpacity={0.8}
+          >
+            <FontAwesome6 name="clock" size={13} color={showExpiringOnly ? '#FFF' : '#E17055'} />
+            <Text style={[styles.expiringBannerText, showExpiringOnly && styles.expiringBannerTextActive]}>
+              {expiringItems.length} 件物品临近或已过期
+            </Text>
+            <Text style={[styles.expiringBannerAction, showExpiringOnly && styles.expiringBannerTextActive]}>
+              {showExpiringOnly ? '取消筛选' : '查看'}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* Category Filter */}
         <FlatList
@@ -356,6 +425,14 @@ export default function HomeScreen() {
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#6C63FF" />
           </View>
+        ) : displayItems.length === 0 && showExpiringOnly ? (
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIconWrap}>
+              <FontAwesome6 name="circle-check" size={36} color="#00B894" />
+            </View>
+            <Text style={styles.emptyTitle}>没有临期物品</Text>
+            <Text style={styles.emptySubtitle}>所有物品都在保质期内</Text>
+          </View>
         ) : items.length === 0 ? (
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconWrap}>
@@ -366,7 +443,7 @@ export default function HomeScreen() {
           </View>
         ) : viewMode === 'all' ? (
           <FlatList
-            data={items}
+            data={displayItems}
             keyExtractor={(item) => String(item.id)}
             renderItem={renderItem}
             contentContainerStyle={styles.itemsList}
@@ -398,6 +475,11 @@ export default function HomeScreen() {
           onClose={() => setQuickSaveVisible(false)}
           onSaved={handleQuickSaved}
         />
+
+        {/* AI 问一问（条件渲染，每次提问重新挂载以重置状态） */}
+        {askVisible && askQuestion ? (
+          <AskModal question={askQuestion} onClose={() => setAskVisible(false)} />
+        ) : null}
       </View>
     </Screen>
   );
@@ -424,6 +506,68 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     marginBottom: 12,
     gap: 10,
+  },
+  askBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: '#6C63FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  expiringBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 24,
+    marginBottom: 12,
+    backgroundColor: '#E1705515',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E1705530',
+  },
+  expiringBannerActive: {
+    backgroundColor: '#E17055',
+    borderColor: '#E17055',
+  },
+  expiringBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#E17055',
+  },
+  expiringBannerTextActive: {
+    color: '#FFF',
+  },
+  expiringBannerAction: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#E17055',
+  },
+  borrowedBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FDCB6E',
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    zIndex: 2,
+  },
+  borrowedBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#2D3436',
   },
   searchBar: {
     flex: 1,

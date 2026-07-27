@@ -8,6 +8,8 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { useFocusEffect } from 'expo-router';
@@ -33,9 +35,21 @@ interface Item {
   tags: string;
   photo_key: string;
   note: string;
+  borrowed_to: string | null;
+  borrowed_at: string | null;
+  expiry_date: string | null;
   created_at: string;
   updated_at: string;
   categories: Category;
+}
+
+// 距过期天数（负数表示已过期）
+function daysUntilExpiry(dateStr?: string | null): number | null {
+  if (!dateStr) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(`${dateStr}T00:00:00`);
+  return Math.ceil((target.getTime() - today.getTime()) / 86400000);
 }
 
 export default function ItemDetailScreen() {
@@ -45,6 +59,9 @@ export default function ItemDetailScreen() {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showRephotoPrompt, setShowRephotoPrompt] = useState(false);
+  const [borrowModalVisible, setBorrowModalVisible] = useState(false);
+  const [borrowName, setBorrowName] = useState('');
+  const [borrowSaving, setBorrowSaving] = useState(false);
 
   const fetchItem = useCallback(async () => {
     if (!id) return;
@@ -122,6 +139,66 @@ export default function ItemDetailScreen() {
 
   const handleDismissRephoto = () => {
     setShowRephotoPrompt(false);
+  };
+
+  const handleBorrow = async () => {
+    if (!borrowName.trim()) {
+      Alert.alert('提示', '请输入借给了谁');
+      return;
+    }
+    setBorrowSaving(true);
+    try {
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：PUT /api/v1/items/:id
+       * Path 参数：id: number
+       * Body 参数：borrowed_to: string, borrowed_at: string（ISO 格式）
+       */
+      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          borrowed_to: borrowName.trim(),
+          borrowed_at: new Date().toISOString(),
+        }),
+      });
+      if (!res.ok) throw new Error('borrow failed');
+      setBorrowModalVisible(false);
+      setBorrowName('');
+      fetchItem();
+    } catch (e) {
+      Alert.alert('操作失败', '请重试');
+    } finally {
+      setBorrowSaving(false);
+    }
+  };
+
+  const handleReturn = () => {
+    Alert.alert('确认归还', `「${item?.name}」已从 ${item?.borrowed_to} 处归还？`, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '已归还',
+        onPress: async () => {
+          try {
+            /**
+             * 服务端文件：server/src/routes/items.ts
+             * 接口：PUT /api/v1/items/:id
+             * Path 参数：id: number
+             * Body 参数：borrowed_to: null, borrowed_at: null
+             */
+            const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ borrowed_to: null, borrowed_at: null }),
+            });
+            if (!res.ok) throw new Error('return failed');
+            fetchItem();
+          } catch (e) {
+            Alert.alert('操作失败', '请重试');
+          }
+        },
+      },
+    ]);
   };
 
   if (loading) {
@@ -251,6 +328,67 @@ export default function ItemDetailScreen() {
             </View>
           ) : null}
 
+          {/* 借出状态 */}
+          <View style={styles.infoRow}>
+            <View style={[styles.infoIconContainer, item.borrowed_to ? styles.borrowIconBg : null]}>
+              <FontAwesome6
+                name="hand-holding"
+                size={16}
+                color={item.borrowed_to ? '#E17055' : '#6C63FF'}
+              />
+            </View>
+            <View style={styles.infoTextContainer}>
+              <Text style={styles.infoLabel}>借出状态</Text>
+              {item.borrowed_to ? (
+                <Text style={[styles.infoValue, styles.borrowedText]}>
+                  已借给 {item.borrowed_to}
+                  {item.borrowed_at
+                    ? `（${new Date(item.borrowed_at).toLocaleDateString('zh-CN')} 借出）`
+                    : ''}
+                </Text>
+              ) : (
+                <Text style={styles.infoValue}>在家</Text>
+              )}
+            </View>
+            {item.borrowed_to ? (
+              <TouchableOpacity style={styles.returnBtn} onPress={handleReturn}>
+                <FontAwesome6 name="rotate-left" size={13} color="#00B894" />
+                <Text style={styles.returnBtnText}>标记归还</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={styles.borrowBtn} onPress={() => setBorrowModalVisible(true)}>
+                <FontAwesome6 name="share" size={13} color="#6C63FF" />
+                <Text style={styles.borrowBtnText}>标记借出</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* 过期日期 */}
+          {item.expiry_date ? (() => {
+            const days = daysUntilExpiry(item.expiry_date);
+            const urgent = days !== null && days <= 30;
+            return (
+              <View style={styles.infoRow}>
+                <View style={[styles.infoIconContainer, urgent ? styles.expiryIconBg : null]}>
+                  <FontAwesome6
+                    name="hourglass-half"
+                    size={16}
+                    color={urgent ? '#E17055' : '#6C63FF'}
+                  />
+                </View>
+                <View style={styles.infoTextContainer}>
+                  <Text style={styles.infoLabel}>到期日</Text>
+                  <Text style={[styles.infoValue, urgent ? styles.expiredText : null]}>
+                    {item.expiry_date}
+                    {days !== null && days < 0 ? `（已过期 ${-days} 天）` : ''}
+                    {days !== null && days === 0 ? '（今天到期）' : ''}
+                    {days !== null && days > 0 ? `（还有 ${days} 天）` : ''}
+                  </Text>
+                </View>
+              </View>
+            );
+          })() : null}
+
           {/* Created date */}
           <View style={styles.dateRow}>
             <Text style={styles.dateText}>
@@ -259,11 +397,116 @@ export default function ItemDetailScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {/* 借出弹窗 */}
+      <Modal visible={borrowModalVisible} transparent animationType="fade">
+        <View style={styles.borrowOverlay}>
+          <View style={styles.borrowModal}>
+            <Text style={styles.borrowModalTitle}>借给谁了？</Text>
+            <TextInput
+              style={styles.borrowInput}
+              placeholder="如：同事小李、邻居老王"
+              placeholderTextColor="#B2BEC3"
+              value={borrowName}
+              onChangeText={setBorrowName}
+              maxLength={20}
+              autoFocus
+            />
+            <View style={styles.borrowModalActions}>
+              <TouchableOpacity
+                style={styles.borrowCancelBtn}
+                onPress={() => {
+                  setBorrowModalVisible(false);
+                  setBorrowName('');
+                }}
+              >
+                <Text style={styles.borrowCancelText}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.borrowConfirmBtn, borrowSaving && styles.borrowConfirmDisabled]}
+                onPress={handleBorrow}
+                disabled={borrowSaving}
+              >
+                {borrowSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.borrowConfirmText}>确认借出</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  // 借出 / 到期
+  borrowIconBg: { backgroundColor: '#E1705518' },
+  borrowedText: { color: '#E17055' },
+  borrowBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#6C63FF14',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+  },
+  borrowBtnText: { fontSize: 13, color: '#6C63FF', fontWeight: '600' },
+  returnBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#00B89414',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+  },
+  returnBtnText: { fontSize: 13, color: '#00B894', fontWeight: '600' },
+  expiryIconBg: { backgroundColor: '#E1705518' },
+  expiredText: { color: '#E17055' },
+  // 借出弹窗
+  borrowOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  borrowModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+  },
+  borrowModalTitle: { fontSize: 18, fontWeight: '700', color: '#2D3436', marginBottom: 16 },
+  borrowInput: {
+    backgroundColor: '#F0F0F3',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#2D3436',
+    marginBottom: 20,
+  },
+  borrowModalActions: { flexDirection: 'row', gap: 12 },
+  borrowCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#F0F0F3',
+    alignItems: 'center',
+  },
+  borrowCancelText: { fontSize: 15, color: '#636E72', fontWeight: '600' },
+  borrowConfirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#6C63FF',
+    alignItems: 'center',
+  },
+  borrowConfirmDisabled: { opacity: 0.6 },
+  borrowConfirmText: { fontSize: 15, color: '#FFFFFF', fontWeight: '700' },
   container: {
     paddingHorizontal: 24,
     paddingTop: 16,
