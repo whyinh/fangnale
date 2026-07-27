@@ -33,7 +33,7 @@ router.get("/", async (req, res) => {
 
   let query = client
     .from("items")
-    .select("id, name, category_id, location, tags, photo_key, note, created_at, updated_at, categories(id, name, icon, color)")
+    .select("id, name, category_id, location, tags, photo_key, note, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
     .order("created_at", { ascending: false });
 
   if (category_id) {
@@ -80,7 +80,7 @@ router.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const { data, error } = await client
     .from("items")
-    .select("id, name, category_id, location, tags, photo_key, note, created_at, updated_at, categories(id, name, icon, color)")
+    .select("id, name, category_id, location, tags, photo_key, note, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
     .eq("id", id)
     .single();
   if (error) throw new Error(`查询物品失败: ${error.message}`);
