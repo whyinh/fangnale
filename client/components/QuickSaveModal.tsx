@@ -20,6 +20,8 @@ import { createFormDataFile } from '@/utils';
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 const LAST_CATEGORY_KEY = '@stashspot_last_category_id';
 
+type AiStatus = 'idle' | 'recognizing' | 'done' | 'failed';
+
 interface Category {
   id: number;
   name: string;
@@ -45,31 +47,77 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [location, setLocation] = useState('');
   const [name, setName] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const [newTag, setNewTag] = useState('');
   const [photoKey, setPhotoKey] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [aiStatus, setAiStatus] = useState<AiStatus>('idle');
   const [saving, setSaving] = useState(false);
-  const uploadStartedFor = useRef<string | null>(null);
+  const recognizeStartedFor = useRef<string | null>(null);
 
-  // Modal 打开时：重置状态 + 后台上传照片 + 拉取分类和常用位置
+  // Modal 打开时：重置状态 + 后台 AI 识别（含上传）+ 拉取分类和常用位置
   useEffect(() => {
     if (!visible || !photoUri) return;
 
     setLocation('');
     setName('');
+    setTags([]);
+    setNewTag('');
     setPhotoKey(null);
+    setAiStatus('idle');
 
-    // 后台并行上传照片（用户填信息的同时照片已传好）
-    if (uploadStartedFor.current !== photoUri) {
-      uploadStartedFor.current = photoUri;
-      uploadPhoto(photoUri);
+    // 后台并行：照片上传 + AI 识别（用户选位置的同时 AI 已填好名称/标签/分类）
+    if (recognizeStartedFor.current !== photoUri) {
+      recognizeStartedFor.current = photoUri;
+      recognizePhoto(photoUri);
     }
 
     fetchCategories();
     fetchFrequentLocations();
   }, [visible, photoUri]);
 
-  const uploadPhoto = async (uri: string) => {
-    setUploading(true);
+  // AI 识别：一次请求完成 照片上传 S3 + 多模态识别，返回 photo_key 供保存时直接复用
+  const recognizePhoto = async (uri: string) => {
+    setAiStatus('recognizing');
+    try {
+      const file = await createFormDataFile(uri, `item_${Date.now()}.jpg`, 'image/jpeg');
+      const formData = new FormData();
+      formData.append('photo', file as any);
+
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：POST /api/v1/items/recognize
+       * Body 参数：photo: File (FormData)
+       * 返回：{ photo_key: string, name: string, tags: string[], category_id: number | null }
+       */
+      const res = await fetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/recognize`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) throw new Error('recognize failed');
+      const data = await res.json();
+
+      setPhotoKey(data.photo_key);
+      // 用户已在输入则不覆盖（识别耗时 1-3 秒，尊重用户输入）
+      if (data.name && data.name !== '未命名物品' && data.name !== '未识别物品') {
+        setName((prev) => (prev.trim() ? prev : data.name));
+      }
+      if (Array.isArray(data.tags)) {
+        setTags((prev) => (prev.length > 0 ? prev : data.tags));
+      }
+      if (data.category_id) {
+        setSelectedCategory(data.category_id);
+      }
+      setAiStatus('done');
+    } catch (e) {
+      console.error('Recognize failed, fallback to plain upload:', e);
+      // 降级：识别接口不可用时走纯上传，不影响保存流程
+      setAiStatus('failed');
+      fallbackUpload(uri);
+    }
+  };
+
+  // 降级上传（识别接口失败时保证照片仍能保存）
+  const fallbackUpload = async (uri: string) => {
     try {
       const file = await createFormDataFile(uri, `item_${Date.now()}.jpg`, 'image/jpeg');
       const formData = new FormData();
@@ -89,8 +137,6 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
     } catch (e) {
       console.error('Upload failed:', e);
       Toast.show({ type: 'error', text1: '照片上传失败', text2: '请关闭后重试' });
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -104,7 +150,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
       const data = await res.json();
       setCategories(data);
 
-      // 自动选中上次使用的分类
+      // 自动选中上次使用的分类（AI 识别完成后会覆盖为更准确的分类）
       const lastId = await AsyncStorage.getItem(LAST_CATEGORY_KEY);
       const lastIdNum = lastId ? Number(lastId) : null;
       const validLast = data.find((c: Category) => c.id === lastIdNum);
@@ -136,6 +182,19 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
     setLocation(loc === location ? '' : loc);
   };
 
+  const handleRemoveTag = (tag: string) => {
+    setTags((prev) => prev.filter((t) => t !== tag));
+  };
+
+  const handleAddTag = () => {
+    const t = newTag.trim();
+    if (!t) return;
+    if (!tags.includes(t) && tags.length < 6) {
+      setTags((prev) => [...prev, t]);
+    }
+    setNewTag('');
+  };
+
   const handleSave = async () => {
     if (!location.trim()) {
       Toast.show({ type: 'info', text1: '选个位置', text2: '点一下常用位置，或输入新位置' });
@@ -164,7 +223,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
           name: name.trim(),
           category_id: selectedCategory,
           location: location.trim(),
-          tags: '',
+          tags: tags.join(','),
           photo_key: photoKey,
           note: '',
         }),
@@ -186,7 +245,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
     }
   };
 
-  const saveDisabled = saving || uploading || !photoKey;
+  const saveDisabled = saving || aiStatus === 'recognizing' || !photoKey;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -198,20 +257,34 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
         <View style={styles.sheet}>
           {/* 顶部：照片 + 标题 */}
           <View style={styles.headerRow}>
-            {photoUri ? (
-              <Image source={{ uri: photoUri }} style={styles.thumbnail} />
-            ) : (
-              <View style={[styles.thumbnail, styles.thumbnailPlaceholder]}>
-                <FontAwesome6 name="image" size={20} color="#B2BEC3" />
-              </View>
-            )}
+            <View>
+              {photoUri ? (
+                <Image source={{ uri: photoUri }} style={styles.thumbnail} />
+              ) : (
+                <View style={[styles.thumbnail, styles.thumbnailPlaceholder]}>
+                  <FontAwesome6 name="image" size={20} color="#B2BEC3" />
+                </View>
+              )}
+              {aiStatus === 'recognizing' && (
+                <View style={styles.thumbnailOverlay}>
+                  <ActivityIndicator size="small" color="#FFF" />
+                </View>
+              )}
+            </View>
             <View style={styles.headerText}>
               <Text style={styles.title}>记到哪了？</Text>
               <View style={styles.uploadStatus}>
-                {uploading ? (
+                {aiStatus === 'recognizing' ? (
                   <>
                     <ActivityIndicator size={10} color="#6C63FF" />
-                    <Text style={styles.uploadStatusText}>照片上传中…</Text>
+                    <Text style={styles.uploadStatusText}>AI 识别中…</Text>
+                  </>
+                ) : aiStatus === 'done' ? (
+                  <>
+                    <FontAwesome6 name="wand-magic-sparkles" size={10} color="#00B894" />
+                    <Text style={[styles.uploadStatusText, { color: '#00B894' }]}>
+                      AI 已识别，可修改
+                    </Text>
                   </>
                 ) : photoKey ? (
                   <>
@@ -226,90 +299,128 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
             </TouchableOpacity>
           </View>
 
-          {/* 位置快捷选择 */}
-          {frequentLocations.length > 0 && (
+          <ScrollView
+            style={styles.bodyScroll}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* 位置快捷选择 */}
+            {frequentLocations.length > 0 && (
+              <View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.locChips}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {frequentLocations.map((item) => {
+                    const active = location === item.location;
+                    return (
+                      <TouchableOpacity
+                        key={item.location}
+                        style={[styles.locChip, active && styles.locChipActive]}
+                        onPress={() => handleLocationChipPress(item.location)}
+                      >
+                        <FontAwesome6
+                          name="map-pin"
+                          size={11}
+                          color={active ? '#FFF' : '#6C63FF'}
+                        />
+                        <Text style={[styles.locChipText, active && styles.locChipTextActive]}>
+                          {item.location}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* 位置输入 */}
+            <View style={styles.inputRow}>
+              <FontAwesome6 name="map-pin" size={15} color="#6C63FF" />
+              <TextInput
+                style={styles.input}
+                placeholder="放在哪了？如：书房抽屉"
+                placeholderTextColor="#B2BEC3"
+                value={location}
+                onChangeText={setLocation}
+                autoFocus={Platform.OS !== 'web'}
+              />
+            </View>
+
+            {/* 名称输入（选填，AI 自动填） */}
+            <View style={styles.inputRow}>
+              <FontAwesome6
+                name={aiStatus === 'done' ? 'wand-magic-sparkles' : 'tag'}
+                size={14}
+                color={aiStatus === 'done' ? '#6C63FF' : '#B2BEC3'}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder={
+                  aiStatus === 'recognizing' ? 'AI 正在识别物品…' : '物品名称（选填）'
+                }
+                placeholderTextColor="#B2BEC3"
+                value={name}
+                onChangeText={setName}
+              />
+            </View>
+
+            {/* 分类选择（AI 自动选中） */}
             <View>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.locChips}
+                contentContainerStyle={styles.catChips}
                 keyboardShouldPersistTaps="handled"
               >
-                {frequentLocations.map((item) => {
-                  const active = location === item.location;
+                {categories.map((cat) => {
+                  const active = selectedCategory === cat.id;
                   return (
                     <TouchableOpacity
-                      key={item.location}
-                      style={[styles.locChip, active && styles.locChipActive]}
-                      onPress={() => handleLocationChipPress(item.location)}
+                      key={cat.id}
+                      style={[styles.catChip, active && { backgroundColor: cat.color }]}
+                      onPress={() => setSelectedCategory(cat.id)}
                     >
                       <FontAwesome6
-                        name="map-pin"
-                        size={11}
-                        color={active ? '#FFF' : '#6C63FF'}
+                        name={cat.icon as any}
+                        size={12}
+                        color={active ? '#FFF' : cat.color}
                       />
-                      <Text style={[styles.locChipText, active && styles.locChipTextActive]}>
-                        {item.location}
-                      </Text>
+                      <Text style={[styles.catChipText, active && { color: '#FFF' }]}>{cat.name}</Text>
                     </TouchableOpacity>
                   );
                 })}
               </ScrollView>
             </View>
-          )}
 
-          {/* 位置输入 */}
-          <View style={styles.inputRow}>
-            <FontAwesome6 name="map-pin" size={15} color="#6C63FF" />
-            <TextInput
-              style={styles.input}
-              placeholder="放在哪了？如：书房抽屉"
-              placeholderTextColor="#B2BEC3"
-              value={location}
-              onChangeText={setLocation}
-              autoFocus={Platform.OS !== 'web'}
-            />
-          </View>
-
-          {/* 名称输入（选填） */}
-          <View style={styles.inputRow}>
-            <FontAwesome6 name="tag" size={14} color="#B2BEC3" />
-            <TextInput
-              style={styles.input}
-              placeholder="物品名称（选填，照片能看清就行）"
-              placeholderTextColor="#B2BEC3"
-              value={name}
-              onChangeText={setName}
-            />
-          </View>
-
-          {/* 分类选择 */}
-          <View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.catChips}
-              keyboardShouldPersistTaps="handled"
-            >
-              {categories.map((cat) => {
-                const active = selectedCategory === cat.id;
-                return (
-                  <TouchableOpacity
-                    key={cat.id}
-                    style={[styles.catChip, active && { backgroundColor: cat.color }]}
-                    onPress={() => setSelectedCategory(cat.id)}
-                  >
-                    <FontAwesome6
-                      name={cat.icon as any}
-                      size={12}
-                      color={active ? '#FFF' : cat.color}
-                    />
-                    <Text style={[styles.catChipText, active && { color: '#FFF' }]}>{cat.name}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
+            {/* 标签（AI 生成，可增删） */}
+            {(tags.length > 0 || aiStatus === 'done') && (
+              <View style={styles.tagsSection}>
+                <View style={styles.tagsRow}>
+                  {tags.map((tag) => (
+                    <View key={tag} style={styles.tagChip}>
+                      <Text style={styles.tagChipText}>{tag}</Text>
+                      <TouchableOpacity onPress={() => handleRemoveTag(tag)} hitSlop={6}>
+                        <FontAwesome6 name="xmark" size={9} color="#6C63FF" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  <TextInput
+                    style={styles.tagInput}
+                    placeholder="+ 标签"
+                    placeholderTextColor="#B2BEC3"
+                    value={newTag}
+                    onChangeText={setNewTag}
+                    onSubmitEditing={handleAddTag}
+                    onBlur={handleAddTag}
+                    returnKeyType="done"
+                  />
+                </View>
+              </View>
+            )}
+          </ScrollView>
 
           {/* 保存按钮 */}
           <TouchableOpacity
@@ -348,6 +459,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     padding: 24,
     paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+    maxHeight: '88%',
     shadowColor: '#2D3436',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.15,
@@ -357,7 +469,7 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 18,
+    marginBottom: 16,
   },
   thumbnail: {
     width: 56,
@@ -366,6 +478,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8E8EB',
   },
   thumbnailPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  thumbnailOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 16,
+    backgroundColor: 'rgba(45,52,54,0.45)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -395,6 +514,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8E8EB',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  bodyScroll: {
+    flexGrow: 0,
   },
   locChips: {
     gap: 8,
@@ -453,6 +575,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#636E72',
+  },
+  tagsSection: {
+    marginTop: 6,
+  },
+  tagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tagChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(108,99,255,0.1)',
+    borderRadius: 9999,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
+  tagChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6C63FF',
+  },
+  tagInput: {
+    minWidth: 64,
+    fontSize: 12,
+    color: '#2D3436',
+    paddingVertical: 6,
+    paddingHorizontal: 4,
   },
   saveBtn: {
     flexDirection: 'row',

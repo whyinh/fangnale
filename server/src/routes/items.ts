@@ -1,8 +1,30 @@
 import { Router } from "express";
+import multer from "multer";
+import { S3Storage, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "../storage/database/supabase-client.js";
 
 const router = Router();
 const client = getSupabaseClient();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+});
+
+const storage = new S3Storage({
+  endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
+  accessKey: "",
+  secretKey: "",
+  bucketName: process.env.COZE_BUCKET_NAME,
+  region: "cn-beijing",
+});
+
+// 从 LLM 输出中提取 JSON 对象（容忍 markdown 代码块包裹）
+function extractJson(text: string): Record<string, unknown> {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("LLM 输出中未找到 JSON");
+  return JSON.parse(match[0]) as Record<string, unknown>;
+}
 
 // GET /api/v1/items - 获取物品列表
 // Query: { category_id?: number, search?: string }
@@ -67,6 +89,95 @@ router.get("/:id", async (req, res) => {
     return;
   }
   res.json(data);
+});
+
+// POST /api/v1/items/recognize - AI 识别物品照片
+// FormData: photo (image)
+// 一次完成：照片上传 S3 + 多模态 LLM 识别，返回 { photo_key, name, tags, category_id }
+// 静态路由定义在 POST / 之前，且识别失败时降级返回默认字段（photo_key 始终有效）
+router.post("/recognize", upload.single("photo"), async (req, res) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: "请上传物品照片" });
+      return;
+    }
+
+    // 1. 照片上传 S3（识别与物品记录共用同一张图，前端保存时直接复用 photo_key）
+    const { buffer, originalname, mimetype } = req.file;
+    const ext = originalname.split(".").pop() || "jpg";
+    const fileName = `items/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const photoKey = await storage.uploadFile({
+      fileContent: buffer,
+      fileName,
+      contentType: mimetype,
+    });
+
+    // 2. 查询现有分类（让 LLM 从中选择，保证分类匹配用户自己的分类体系）
+    const { data: cats } = await client.from("categories").select("id, name").order("id");
+    const categoryNames = (cats || []).map((c) => c.name);
+
+    // 3. 调用多模态 LLM 识别（失败降级：photo_key 已上传，识别字段用默认值）
+    let name = "未命名物品";
+    let tags: string[] = [];
+    let categoryId: number | null = cats && cats.length > 0 ? cats[0].id : null;
+
+    try {
+      const customHeaders = HeaderUtils.extractForwardHeaders(
+        req.headers as unknown as Record<string, string>
+      );
+      const llm = new LLMClient(new Config(), customHeaders);
+      const dataUri = `data:${mimetype || "image/jpeg"};base64,${buffer.toString("base64")}`;
+
+      const prompt = [
+        "你是一个物品识别助手，用户拍了一张物品照片，想快速记录「这个物品存放在哪里」。",
+        "请识别照片中的主体物品，只返回一个 JSON 对象，不要输出任何其他文字：",
+        '{"name": "物品名称", "tags": ["标签1", "标签2"], "category": "分类名"}',
+        "要求：",
+        '- name：物品本身的名称，简洁具体，2-8 个字（如"瑞士军刀""护照""电钻"），不要包含位置描述',
+        "- tags：2-4 个描述物品特征或用途的标签，每个 2-6 个字",
+        `- category：必须从以下分类中原样选择一个：${categoryNames.join("、") || "其他"}`,
+        '- 如果照片模糊或无法辨认物品，name 返回"未识别物品"，tags 返回空数组，category 返回列表中的第一个分类',
+      ].join("\n");
+
+      const response = await llm.invoke(
+        [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: dataUri, detail: "low" } },
+            ],
+          },
+        ],
+        { model: "doubao-seed-1-8-251228", temperature: 0.3 }
+      );
+
+      const parsed = extractJson(response.content);
+
+      if (typeof parsed.name === "string" && parsed.name.trim()) {
+        name = parsed.name.trim().slice(0, 30);
+      }
+      if (Array.isArray(parsed.tags)) {
+        tags = parsed.tags
+          .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+          .slice(0, 4)
+          .map((t) => t.trim().slice(0, 10));
+      }
+      const matched =
+        (cats || []).find((c) => c.name === parsed.category) ??
+        (cats || []).find((c) => typeof parsed.category === "string" && parsed.category.includes(c.name)) ??
+        (cats || []).find((c) => c.name === "其他") ??
+        (cats || [])[0];
+      if (matched) categoryId = matched.id;
+    } catch (llmError) {
+      console.error("LLM 识别失败，使用降级结果:", llmError);
+    }
+
+    res.json({ photo_key: photoKey, name, tags, category_id: categoryId });
+  } catch (error) {
+    console.error("POST /items/recognize error:", error);
+    res.status(500).json({ error: "识别失败，请重试" });
+  }
 });
 
 // POST /api/v1/items - 创建物品
