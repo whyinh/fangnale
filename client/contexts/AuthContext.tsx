@@ -18,6 +18,8 @@ interface AuthContextValue {
   sendPhoneOtp: (phone: string) => Promise<void>;
   /** 校验手机验证码，成功即登录（手机号未注册则自动注册） */
   verifyPhoneOtp: (phone: string, token: string) => Promise<void>;
+  /** 修改昵称（写入 user_metadata.full_name） */
+  updateProfile: (fullName: string) => Promise<void>;
   signOut: () => Promise<void>;
   getAccessToken: () => Promise<string | null>;
 }
@@ -100,6 +102,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.session?.user ?? null);
   }, []);
 
+  const updateProfile = useCallback(async (fullName: string) => {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.auth.updateUser({
+      data: { full_name: fullName.trim() },
+    });
+    if (error) throw new Error(error.message);
+    if (data.user) setUser(data.user);
+  }, []);
+
   const signOut = useCallback(async () => {
     const supabase = await getSupabase();
     await supabase.auth.signOut();
@@ -129,6 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signUp,
         sendPhoneOtp,
         verifyPhoneOtp,
+        updateProfile,
         signOut,
         getAccessToken,
       }}

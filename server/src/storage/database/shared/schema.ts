@@ -63,6 +63,7 @@ export const familyMembers = pgTable(
     family_id: integer("family_id").notNull().references(() => families.id),
     user_id: text("user_id").notNull(),
     user_email: varchar("user_email", { length: 200 }),
+    user_name: varchar("user_name", { length: 50 }),
     role: varchar("role", { length: 20 }).notNull().default("member"),
     joined_at: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
   },

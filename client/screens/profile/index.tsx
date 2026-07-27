@@ -16,6 +16,11 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Modal,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
+  Platform,
 } from 'react-native';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -32,6 +37,7 @@ interface FamilyMember {
   id: number;
   user_id: string;
   user_email: string;
+  user_name?: string | null;
   role: 'owner' | 'member';
   joined_at: string;
 }
@@ -44,7 +50,10 @@ interface Family {
 }
 
 export default function ProfileScreen() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, updateProfile } = useAuth();
+  const [nameModalVisible, setNameModalVisible] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+  const [savingName, setSavingName] = useState(false);
   const [family, setFamily] = useState<Family | null>(null);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -204,8 +213,41 @@ export default function ProfileScreen() {
   };
 
   const myContact = user?.email || user?.phone || '';
-  const userInitial = contactAvatarText(myContact);
+  const myName =
+    typeof user?.user_metadata?.full_name === 'string' && user.user_metadata.full_name.trim()
+      ? (user.user_metadata.full_name as string).trim()
+      : '';
+  const userInitial = contactAvatarText(myName || myContact);
   const isOwner = family?.owner_id === user?.id;
+
+  const openNameModal = () => {
+    setNameInput(myName);
+    setNameModalVisible(true);
+  };
+
+  const handleSaveName = async () => {
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
+      Toast.show({ type: 'error', text1: '昵称不能为空' });
+      return;
+    }
+    if (trimmed.length > 20) {
+      Toast.show({ type: 'error', text1: '昵称最多 20 个字符' });
+      return;
+    }
+    setSavingName(true);
+    try {
+      await updateProfile(trimmed);
+      setNameModalVisible(false);
+      Toast.show({ type: 'success', text1: '昵称已更新' });
+      // 后端会随下次请求自动同步昵称到家庭成员，这里主动刷新成员列表
+      fetchFamily();
+    } catch {
+      Toast.show({ type: 'error', text1: '保存失败，请重试' });
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   return (
     <Screen style={styles.screen}>
@@ -220,13 +262,19 @@ export default function ProfileScreen() {
             </View>
             <View style={styles.userInfo}>
               <Text style={styles.userEmail} numberOfLines={1}>
+                {myName || '未设置昵称'}
+              </Text>
+              <Text style={styles.userContact} numberOfLines={1}>
                 {formatContact(myContact) || '—'}
               </Text>
-              <View style={styles.syncBadge}>
-                <FontAwesome6 name="cloud-arrow-up" size={11} color="#4CAF50" />
-                <Text style={styles.syncText}>云端同步已开启</Text>
-              </View>
             </View>
+            <TouchableOpacity style={styles.editNameBtn} onPress={openNameModal} activeOpacity={0.7}>
+              <FontAwesome6 name="pen" size={13} color="#6C63FF" />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.syncBadge}>
+            <FontAwesome6 name="cloud-arrow-up" size={11} color="#4CAF50" />
+            <Text style={styles.syncText}>云端同步已开启</Text>
           </View>
         </View>
 
@@ -262,13 +310,20 @@ export default function ProfileScreen() {
                   <View key={m.id} style={styles.memberRow}>
                     <View style={[styles.memberAvatar, m.role === 'owner' && styles.ownerAvatar]}>
                       <Text style={[styles.memberAvatarText, m.role === 'owner' && styles.ownerAvatarText]}>
-                        {contactAvatarText(m.user_email)}
+                        {contactAvatarText(m.user_name || m.user_email)}
                       </Text>
                     </View>
-                    <Text style={styles.memberEmail} numberOfLines={1}>
-                      {formatContact(m.user_email)}
-                      {m.user_id === user?.id ? '（我）' : ''}
-                    </Text>
+                    <View style={styles.memberInfo}>
+                      <Text style={styles.memberEmail} numberOfLines={1}>
+                        {m.user_name || formatContact(m.user_email)}
+                        {m.user_id === user?.id ? '（我）' : ''}
+                      </Text>
+                      {m.user_name ? (
+                        <Text style={styles.memberContact} numberOfLines={1}>
+                          {formatContact(m.user_email)}
+                        </Text>
+                      ) : null}
+                    </View>
                     {m.role === 'owner' && (
                       <View style={styles.roleBadge}>
                         <Text style={styles.roleBadgeText}>创建者</Text>
@@ -361,6 +416,53 @@ export default function ProfileScreen() {
 
         <Text style={styles.versionText}>StashSpot v1.0.0</Text>
       </ScrollView>
+
+      {/* 修改昵称弹窗 */}
+      <Modal visible={nameModalVisible} transparent animationType="fade" onRequestClose={() => setNameModalVisible(false)}>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} disabled={Platform.OS === 'web'}>
+          <KeyboardAvoidingView
+            style={styles.modalOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>修改昵称</Text>
+              <Text style={styles.modalHint}>家庭成员将通过昵称认出你</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={nameInput}
+                onChangeText={setNameInput}
+                placeholder="请输入昵称"
+                placeholderTextColor="#9EA0A5"
+                maxLength={20}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleSaveName}
+              />
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalCancelBtn]}
+                  onPress={() => setNameModalVisible(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.modalCancelText}>取消</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalSaveBtn, savingName && styles.btnDisabled]}
+                  onPress={handleSaveName}
+                  disabled={savingName}
+                  activeOpacity={0.8}
+                >
+                  {savingName ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalSaveText}>保存</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </TouchableWithoutFeedback>
+      </Modal>
     </Screen>
   );
 }
@@ -617,5 +719,86 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 12,
     color: '#C0C0C8',
+  },
+  userContact: {
+    fontSize: 13,
+    color: '#9EA0A5',
+    marginTop: 2,
+  },
+  editNameBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: '#F0EFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberInfo: {
+    flex: 1,
+  },
+  memberContact: {
+    fontSize: 12,
+    color: '#9EA0A5',
+    marginTop: 1,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#2D3436',
+    textAlign: 'center',
+  },
+  modalHint: {
+    fontSize: 13,
+    color: '#9EA0A5',
+    textAlign: 'center',
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  modalInput: {
+    height: 52,
+    backgroundColor: '#F5F5F7',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: '#2D3436',
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  modalBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelBtn: {
+    backgroundColor: '#F5F5F7',
+  },
+  modalCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#636E72',
+  },
+  modalSaveBtn: {
+    backgroundColor: '#6C63FF',
+  },
+  modalSaveText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

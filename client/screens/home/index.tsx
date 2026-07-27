@@ -43,6 +43,7 @@ interface Item {
   photo_key: string;
   note: string;
   owner_email?: string;
+  owner_name?: string;
   borrowed_to: string | null;
   borrowed_at: string | null;
   expiry_date: string | null;
@@ -78,7 +79,8 @@ function GroupItemCard({
   onPress: () => void;
   myEmail?: string | null;
 }) {
-  const showOwner = !!item.owner_email && item.owner_email !== myEmail;
+  const ownerLabel = item.owner_name || item.owner_email || '';
+  const showOwner = !!ownerLabel && item.owner_email !== myEmail;
   return (
     <TouchableOpacity style={styles.groupCard} onPress={onPress} activeOpacity={0.7}>
       {photoUrl ? (
@@ -91,7 +93,7 @@ function GroupItemCard({
       {showOwner ? (
         <View style={styles.ownerDot}>
           <Text style={styles.ownerDotText}>
-            {contactAvatarText(item.owner_email)}
+            {contactAvatarText(ownerLabel)}
           </Text>
         </View>
       ) : null}
@@ -334,11 +336,11 @@ export default function HomeScreen() {
             <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
           </View>
         ) : null}
-        {item.owner_email && item.owner_email !== myEmail ? (
+        {(item.owner_name || item.owner_email) && item.owner_email !== myEmail ? (
           <View style={styles.locationRow}>
             <FontAwesome6 name="user" size={10} color="#6C63FF" />
             <Text style={styles.ownerText} numberOfLines={1}>
-              {contactLabel(item.owner_email)} 记的
+              {item.owner_name || contactLabel(item.owner_email)} 记的
             </Text>
           </View>
         ) : null}

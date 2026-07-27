@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { S3Storage, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "../storage/database/supabase-client.js";
-import { requireAuth, getVisibleOwnerIds, getFamilyEmailMap } from "../middleware/auth.js";
+import { requireAuth, getVisibleOwnerIds, getFamilyMemberMap } from "../middleware/auth.js";
 
 const router = Router();
 const client = getSupabaseClient();
@@ -54,12 +54,16 @@ router.get("/", async (req, res) => {
 
   const { data, error } = await query.limit(100);
   if (error) throw new Error(`查询物品失败: ${error.message}`);
-  // 家庭场景：补充归属人邮箱，前端展示"谁记的"
-  const emailMap = await getFamilyEmailMap(req.userId!);
-  const items = (data || []).map((item) => ({
-    ...item,
-    owner_email: emailMap[(item as { owner_id?: string }).owner_id || ""] || null,
-  }));
+  // 家庭场景：补充归属人信息，前端展示"谁记的"（昵称优先，回退邮箱/手机号）
+  const memberMap = await getFamilyMemberMap(req.userId!);
+  const items = (data || []).map((item) => {
+    const brief = memberMap[(item as { owner_id?: string }).owner_id || ""];
+    return {
+      ...item,
+      owner_email: brief?.email || null,
+      owner_name: brief?.name || null,
+    };
+  });
   res.json(items);
 });
 

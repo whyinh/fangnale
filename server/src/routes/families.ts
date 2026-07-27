@@ -38,7 +38,7 @@ router.get("/my", async (req: Request, res: Response) => {
     const client = getSupabaseClient();
     const [{ data: family }, { data: members }] = await Promise.all([
       client.from("families").select("id, name, invite_code, created_by, created_at").eq("id", membership.family_id).single(),
-      client.from("family_members").select("user_id, user_email, role, joined_at").eq("family_id", membership.family_id).order("joined_at", { ascending: true }),
+      client.from("family_members").select("user_id, user_email, user_name, role, joined_at").eq("family_id", membership.family_id).order("joined_at", { ascending: true }),
     ]);
     res.json({
       family: family || null,
@@ -86,6 +86,7 @@ router.post("/create", async (req: Request, res: Response) => {
       family_id: family.id,
       user_id: userId,
       user_email: req.userEmail || null,
+      user_name: req.userName || null,
       role: "owner",
     });
     if (memberError) throw new Error(`加入家庭失败: ${memberError.message}`);
@@ -126,6 +127,7 @@ router.post("/join", async (req: Request, res: Response) => {
       family_id: family.id,
       user_id: userId,
       user_email: req.userEmail || null,
+      user_name: req.userName || null,
       role: "member",
     });
     if (memberError) throw new Error(`加入家庭失败: ${memberError.message}`);

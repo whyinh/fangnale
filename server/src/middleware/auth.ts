@@ -8,6 +8,7 @@ declare global {
     interface Request {
       userId?: string;
       userEmail?: string;
+      userName?: string;
     }
   }
 }
@@ -37,6 +38,21 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     req.userId = user.id;
     // 邮箱用户取 email，手机用户回退到 phone（用于"谁记的"/成员列表展示）
     req.userEmail = user.email || user.phone || undefined;
+    // 昵称（用户资料 full_name），可选
+    const meta = user.user_metadata as { full_name?: string } | undefined;
+    req.userName = typeof meta?.full_name === "string" && meta.full_name.trim() ? meta.full_name.trim() : undefined;
+
+    // 惰性同步昵称到 family_members（成员列表/归属徽章展示用；不一致才写，失败不阻塞请求）
+    if (req.userName) {
+      try {
+        await getSupabaseClient()
+          .from("family_members")
+          .update({ user_name: req.userName })
+          .eq("user_id", req.userId);
+      } catch (syncErr) {
+        console.error("sync user_name error:", syncErr);
+      }
+    }
     next();
   } catch (e) {
     console.error("requireAuth error:", e);
@@ -70,8 +86,13 @@ export async function getVisibleOwnerIds(userId: string): Promise<string[]> {
   return members.map((m) => m.user_id as string);
 }
 
-/** 查询家庭成员 user_id -> email 映射（用于展示"谁记的"） */
-export async function getFamilyEmailMap(userId: string): Promise<Record<string, string>> {
+export interface FamilyMemberBrief {
+  email: string | null;
+  name: string | null;
+}
+
+/** 查询家庭成员 user_id -> { email, name } 映射（用于展示"谁记的"） */
+export async function getFamilyMemberMap(userId: string): Promise<Record<string, FamilyMemberBrief>> {
   const client = getSupabaseClient();
   const { data: membership } = await client
     .from("family_members")
@@ -82,11 +103,16 @@ export async function getFamilyEmailMap(userId: string): Promise<Record<string, 
   if (!membership) return {};
   const { data: members } = await client
     .from("family_members")
-    .select("user_id, user_email")
+    .select("user_id, user_email, user_name")
     .eq("family_id", membership.family_id);
-  const map: Record<string, string> = {};
+  const map: Record<string, FamilyMemberBrief> = {};
   for (const m of members || []) {
-    if (m.user_id && m.user_email) map[m.user_id as string] = m.user_email as string;
+    if (m.user_id) {
+      map[m.user_id as string] = {
+        email: (m.user_email as string | null) ?? null,
+        name: (m.user_name as string | null) ?? null,
+      };
+    }
   }
   return map;
 }
