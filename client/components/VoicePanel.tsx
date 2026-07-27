@@ -11,7 +11,6 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { useAudioRecorder, useAudioRecorderState, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, createAudioPlayer } from 'expo-audio';
@@ -19,6 +18,7 @@ import type { AudioPlayer } from 'expo-audio';
 import { Feather } from '@expo/vector-icons';
 import EventSource from 'react-native-sse';
 import * as FileSystem from 'expo-file-system/legacy';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createFormDataFile } from '@/utils';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
@@ -64,6 +64,7 @@ function buildWebRecordingOptions() {
 const webRecordingOptions = buildWebRecordingOptions();
 
 export default function VoicePanel({ visible, categories, onClose, onSaved }: VoicePanelProps) {
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>('note');
   const [phase, setPhase] = useState<Phase>('idle');
   const [transcript, setTranscript] = useState('');
@@ -441,8 +442,7 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
       <TouchableWithoutFeedback onPress={handleClose}>
         <View style={styles.overlay}>
           <TouchableWithoutFeedback>
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-              <View style={styles.panel}>
+            <View style={[styles.panel, { paddingBottom: 20 + insets.bottom }]}>
                 {/* 模式切换 + 关闭 */}
                 <View style={styles.header}>
                   <View style={styles.modeTabs}>
@@ -594,7 +594,6 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
                   ) : null}
                 </ScrollView>
               </View>
-            </KeyboardAvoidingView>
           </TouchableWithoutFeedback>
         </View>
       </TouchableWithoutFeedback>
@@ -614,8 +613,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 30,
     paddingTop: 18,
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
-    maxHeight: '85%',
+    maxHeight: '88%',
   },
   header: {
     flexDirection: 'row',
@@ -659,6 +657,7 @@ const styles = StyleSheet.create({
   },
   body: {
     flexGrow: 0,
+    flexShrink: 1,
   },
   hint: {
     fontSize: 14,
