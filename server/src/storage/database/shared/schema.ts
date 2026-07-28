@@ -22,6 +22,25 @@ export const categories = pgTable(
   ]
 );
 
+export const locations = pgTable(
+  "locations",
+  {
+    id: serial().primaryKey(),
+    owner_id: text("owner_id").notNull(),
+    parent_id: integer("parent_id"),
+    type: varchar("type", { length: 20 }).notNull(),
+    name: varchar("name", { length: 50 }).notNull(),
+    template: varchar("template", { length: 30 }),
+    grid_pos: integer("grid_pos"),
+    sort: integer("sort").default(0),
+    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("locations_owner_idx").on(table.owner_id),
+    index("locations_parent_idx").on(table.parent_id),
+  ]
+);
+
 export const items = pgTable(
   "items",
   {
@@ -29,6 +48,7 @@ export const items = pgTable(
     name: varchar("name", { length: 100 }).notNull(),
     category_id: integer("category_id").notNull().references(() => categories.id),
     location: varchar("location", { length: 200 }).notNull().default(""),
+    location_id: integer("location_id"),
     tags: text("tags").notNull().default(""),
     photo_key: text("photo_key"),
     note: text("note").notNull().default(""),

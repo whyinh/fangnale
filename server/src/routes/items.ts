@@ -4,6 +4,7 @@ import { S3Storage, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "../storage/database/supabase-client.js";
 import { requireAuth, getVisibleOwnerIds, getFamilyMemberMap } from "../middleware/auth.js";
 import { resolveCategoryId, type CategoryBrief } from "../utils/auto-category.js";
+import { buildPathMap, type LocationRow } from "../utils/location-tree.js";
 
 const router = Router();
 const client = getSupabaseClient();
@@ -31,6 +32,26 @@ function extractJson(text: string): Record<string, unknown> {
   return JSON.parse(match[0]) as Record<string, unknown>;
 }
 
+// 为物品列表补充空间位置路径（location_id → "主卧 / 衣柜 / 顶层"）
+async function attachLocationPaths<T extends { location_id?: number | null }>(
+  userId: string,
+  items: T[]
+): Promise<(T & { location_path: string | null })[]> {
+  if (!items.some((it) => it.location_id)) {
+    return items.map((it) => ({ ...it, location_path: null }));
+  }
+  const visibleIds = await getVisibleOwnerIds(userId);
+  const { data: rows } = await client
+    .from("locations")
+    .select("id, owner_id, parent_id, type, name, template, grid_pos, sort")
+    .in("owner_id", visibleIds);
+  const pathMap = buildPathMap((rows || []) as LocationRow[]);
+  return items.map((it) => ({
+    ...it,
+    location_path: it.location_id ? pathMap.get(it.location_id) || null : null,
+  }));
+}
+
 // GET /api/v1/items - 获取物品列表
 // Query: { category_id?: number, search?: string }
 router.get("/", async (req, res) => {
@@ -39,7 +60,7 @@ router.get("/", async (req, res) => {
 
   let query = client
     .from("items")
-    .select("id, name, category_id, location, tags, photo_key, note, owner_id, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
+    .select("id, name, category_id, location, location_id, tags, photo_key, note, owner_id, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
     .in("owner_id", visibleIds)
     .order("created_at", { ascending: false });
 
@@ -57,7 +78,7 @@ router.get("/", async (req, res) => {
   if (error) throw new Error(`查询物品失败: ${error.message}`);
   // 家庭场景：补充归属人信息，前端展示"谁记的"（昵称优先，回退邮箱/手机号）
   const memberMap = await getFamilyMemberMap(req.userId!);
-  const items = (data || []).map((item) => {
+  const withOwners = (data || []).map((item) => {
     const brief = memberMap[(item as { owner_id?: string }).owner_id || ""];
     return {
       ...item,
@@ -65,6 +86,7 @@ router.get("/", async (req, res) => {
       owner_name: brief?.name || null,
     };
   });
+  const items = await attachLocationPaths(req.userId!, withOwners);
   res.json(items);
 });
 
@@ -100,7 +122,7 @@ router.get("/:id", async (req, res) => {
   const visibleIds = await getVisibleOwnerIds(req.userId!);
   const { data, error } = await client
     .from("items")
-    .select("id, name, category_id, location, tags, photo_key, note, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
+    .select("id, name, category_id, location, location_id, tags, photo_key, note, created_at, updated_at, borrowed_to, borrowed_at, expiry_date, categories(id, name, icon, color)")
     .eq("id", id)
     .in("owner_id", visibleIds)
     .single();
@@ -115,7 +137,8 @@ router.get("/:id", async (req, res) => {
     res.status(404).json({ error: "物品不存在" });
     return;
   }
-  res.json(data);
+  const [itemWithPath] = await attachLocationPaths(req.userId!, [data]);
+  res.json(itemWithPath);
 });
 
 // POST /api/v1/items/organize/analyze - AI 整理分析（全量扫描，返回整理建议）
@@ -668,7 +691,24 @@ ${JSON.stringify(inventory)}
 // Body: { name?: string, category_id?: number, location?: string, tags?: string, photo_key: string, note?: string, expiry_date?: string }
 // category_id 为空或不属于当前用户可见范围时，自动兜底到「其他」分类（不存在则创建）
 router.post("/", async (req, res) => {
-  const { name, category_id, location, tags, photo_key, note, expiry_date } = req.body;
+  const { name, category_id, location, location_id, tags, photo_key, note, expiry_date } = req.body;
+
+  // location_id 校验：必须是当前用户可见的空间节点；非法值静默忽略（不阻断保存）
+  let finalLocationId: number | null = null;
+  if (location_id !== undefined && location_id !== null) {
+    const lid = Number(location_id);
+    if (Number.isInteger(lid) && lid > 0) {
+      const visibleIdsForLoc = await getVisibleOwnerIds(req.userId!);
+      const { data: locNode } = await client
+        .from("locations")
+        .select("id")
+        .in("owner_id", visibleIdsForLoc)
+        .eq("id", lid)
+        .limit(1)
+        .maybeSingle();
+      if (locNode) finalLocationId = lid;
+    }
+  }
 
   let finalCategoryId = Number(category_id) || null;
   if (finalCategoryId !== null) {
@@ -696,6 +736,7 @@ router.post("/", async (req, res) => {
     name: name || "未命名物品",
     category_id: finalCategoryId,
     location: location || "",
+    location_id: finalLocationId,
     tags: tags || "",
     photo_key: photo_key || null,
     note: note || "",
@@ -723,6 +764,25 @@ router.put("/:id", async (req, res) => {
   if (req.body.name !== undefined) updates.name = req.body.name;
   if (req.body.category_id !== undefined) updates.category_id = Number(req.body.category_id);
   if (req.body.location !== undefined) updates.location = req.body.location;
+  // location_id：传 null 摘除空间挂载；传 id 时校验可见范围，非法值忽略
+  if (req.body.location_id !== undefined) {
+    if (req.body.location_id === null) {
+      updates.location_id = null;
+    } else {
+      const lid = Number(req.body.location_id);
+      if (Number.isInteger(lid) && lid > 0) {
+        const visibleIdsForLoc = await getVisibleOwnerIds(req.userId!);
+        const { data: locNode } = await client
+          .from("locations")
+          .select("id")
+          .in("owner_id", visibleIdsForLoc)
+          .eq("id", lid)
+          .limit(1)
+          .maybeSingle();
+        if (locNode) updates.location_id = lid;
+      }
+    }
+  }
   if (req.body.tags !== undefined) updates.tags = req.body.tags;
   if (req.body.photo_key !== undefined) updates.photo_key = req.body.photo_key;
   if (req.body.note !== undefined) updates.note = req.body.note;

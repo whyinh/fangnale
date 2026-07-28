@@ -6,6 +6,7 @@ import uploadRouter from "./routes/upload.js";
 import speechRouter from "./routes/speech.js";
 import authRouter from "./routes/auth.js";
 import familiesRouter from "./routes/families.js";
+import locationsRouter from "./routes/locations.js";
 import { getSupabasePublicConfig } from "./storage/database/supabase-client.js";
 
 // 全局兜底：未捕获的 Promise 拒绝/异常只记录不崩溃
@@ -41,6 +42,7 @@ app.get("/api/v1/supabase-config", (_req, res) => {
   res.json(getSupabasePublicConfig());
 });
 app.use("/api/v1/families", familiesRouter);
+app.use("/api/v1/locations", locationsRouter);
 
 // Error handling middleware
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

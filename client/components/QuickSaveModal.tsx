@@ -1,4 +1,5 @@
 import { authFetch } from '@/utils/api';
+import { LocationPicker, type LocationSelection } from '@/components/LocationPicker';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -47,6 +48,8 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
   const [frequentLocations, setFrequentLocations] = useState<FrequentLocation[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [location, setLocation] = useState('');
+  const [spaceSel, setSpaceSel] = useState<LocationSelection | null>(null);
+  const [pickerVisible, setPickerVisible] = useState(false);
   const [name, setName] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
@@ -60,6 +63,8 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
     if (!visible || !photoUri) return;
 
     setLocation('');
+    setSpaceSel(null);
+    setPickerVisible(false);
     setName('');
     setTags([]);
     setNewTag('');
@@ -208,8 +213,8 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
   };
 
   const handleSave = async () => {
-    if (!location.trim()) {
-      Toast.show({ type: 'info', text1: '选个位置', text2: '点一下常用位置，或输入新位置' });
+    if (!location.trim() && !spaceSel) {
+      Toast.show({ type: 'info', text1: '选个位置', text2: '点一下常用位置、输入新位置，或挂到空间隔层' });
       return;
     }
     if (!selectedCategory) {
@@ -226,7 +231,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
       /**
        * 服务端文件：server/src/routes/items.ts
        * 接口：POST /api/v1/items
-       * Body 参数：name: string, category_id: number, location: string, tags: string, photo_key: string, note: string
+       * Body 参数：name: string, category_id: number, location: string, location_id: number | null, tags: string, photo_key: string, note: string
        */
       const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
         method: 'POST',
@@ -235,6 +240,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
           name: name.trim(),
           category_id: selectedCategory,
           location: location.trim(),
+          location_id: spaceSel?.location_id ?? null,
           tags: tags.join(','),
           photo_key: photoKey,
           note: '',
@@ -248,7 +254,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
         await AsyncStorage.setItem(LAST_CATEGORY_KEY, String(selectedCategory));
       }
 
-      Toast.show({ type: 'success', text1: '存好了', text2: `${location.trim()}` });
+      Toast.show({ type: 'success', text1: '存好了', text2: spaceSel?.path || location.trim() });
       onSaved();
       onClose();
     } catch (e) {
@@ -363,6 +369,21 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
               />
             </View>
 
+            {/* 空间位置（可选）：挂到房间/家具/隔层 */}
+            <TouchableOpacity style={styles.inputRow} onPress={() => setPickerVisible(true)} activeOpacity={0.7}>
+              <FontAwesome6 name="boxes-stacked" size={15} color={spaceSel ? '#6C63FF' : '#B2BEC3'} />
+              <Text style={[styles.input, !spaceSel && { color: '#B2BEC3' }]} numberOfLines={1}>
+                {spaceSel ? spaceSel.path : '挂到空间隔层（可选）'}
+              </Text>
+              {spaceSel ? (
+                <TouchableOpacity onPress={() => setSpaceSel(null)} hitSlop={8}>
+                  <FontAwesome6 name="xmark" size={14} color="#B2BEC3" />
+                </TouchableOpacity>
+              ) : (
+                <FontAwesome6 name="chevron-right" size={12} color="#C0C0C8" />
+              )}
+            </TouchableOpacity>
+
             {/* 名称输入（选填，AI 自动填） */}
             <View style={styles.inputRow}>
               <FontAwesome6
@@ -454,6 +475,11 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+      <LocationPicker
+        visible={pickerVisible}
+        onClose={() => setPickerVisible(false)}
+        onSelect={(sel) => setSpaceSel(sel)}
+      />
     </Modal>
   );
 }

@@ -44,6 +44,8 @@ interface Item {
   name: string;
   category_id: number;
   location: string;
+  location_id?: number | null;
+  location_path?: string | null;
   tags: string;
   photo_key: string;
   note: string;
@@ -350,7 +352,7 @@ export default function HomeScreen() {
   /**
    * 服务端文件：server/src/routes/items.ts
    * 接口：POST /api/v1/items/batch
-   * Body 参数：action: 'recategorize' | 'move' | 'delete', ids: number[], category_id?: number, location?: string
+   * Body 参数：action: 'recategorize' | 'move' | 'delete', item_ids: number[], category_id?: number, location?: string
    */
   const runBatch = useCallback(
     async (body: Record<string, unknown>) => {
@@ -361,7 +363,7 @@ export default function HomeScreen() {
         const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...body, ids }),
+          body: JSON.stringify({ ...body, item_ids: ids }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         setBatchModal(null);
@@ -421,10 +423,10 @@ export default function HomeScreen() {
       ) : null}
       <View style={styles.itemInfo}>
         <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-        {item.location ? (
+        {(item.location_path || item.location) ? (
           <View style={styles.locationRow}>
             <FontAwesome6 name="map-pin" size={11} color="#636E72" />
-            <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
+            <Text style={styles.itemLocation} numberOfLines={1}>{item.location_path || item.location}</Text>
           </View>
         ) : null}
         {(item.owner_name || item.owner_email) && item.owner_email !== myEmail ? (

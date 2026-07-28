@@ -76,6 +76,8 @@ export default function RootLayout() {
               <Stack.Screen name="login" options={{ title: "", gestureEnabled: false }} />
               <Stack.Screen name="item-detail" options={{ title: "" }} />
               <Stack.Screen name="organize" options={{ title: "" }} />
+              <Stack.Screen name="space-room" options={{ title: "" }} />
+              <Stack.Screen name="space-furniture" options={{ title: "" }} />
             </Stack>
           </AuthGate>
         </LinkPreviewContextProvider>

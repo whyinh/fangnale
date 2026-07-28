@@ -44,6 +44,15 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="space"
+        options={{
+          title: '空间',
+          tabBarIcon: ({ color }) => (
+            <FontAwesome6 name="boxes-stacked" size={20} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="add-item"
         options={{
           title: '添加',

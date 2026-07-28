@@ -1,4 +1,5 @@
 import { authFetch } from '@/utils/api';
+import { LocationPicker } from '@/components/LocationPicker';
 import React, { useState, useCallback } from 'react';
 import {
   View,
@@ -35,6 +36,8 @@ interface Item {
   name: string;
   category_id: number;
   location: string;
+  location_id?: number | null;
+  location_path?: string | null;
   tags: string;
   photo_key: string;
   note: string;
@@ -66,6 +69,8 @@ export default function ItemDetailScreen() {
   const [borrowName, setBorrowName] = useState('');
   const [borrowSaving, setBorrowSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  const [spacePickerVisible, setSpacePickerVisible] = useState(false);
 
   const fetchItem = useCallback(async () => {
     if (!id) return;
@@ -105,6 +110,42 @@ export default function ItemDetailScreen() {
       setLoading(false);
     }
   }, [id]);
+
+  // 挂载/改挂空间位置（LocationPicker 选择后立即保存）
+  const handleSelectSpace = useCallback(async (sel: { location_id: number; path: string }) => {
+    try {
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：PUT /api/v1/items/:id
+       * Body 参数：location_id: number | null
+       */
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location_id: sel.location_id }),
+      });
+      if (!res.ok) throw new Error();
+      fetchItem();
+    } catch {
+      // 静默失败，列表未变
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, fetchItem]);
+
+  // 摘除空间挂载
+  const handleDetachSpace = useCallback(async () => {
+    try {
+      await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location_id: null }),
+      });
+      fetchItem();
+    } catch {
+      // 静默失败
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, fetchItem]);
 
   useFocusEffect(
     useCallback(() => {
@@ -337,18 +378,33 @@ export default function ItemDetailScreen() {
             </View>
           </View>
 
-          {/* Location */}
-          {item.location ? (
-            <View style={styles.infoRow}>
-              <View style={styles.infoIconContainer}>
-                <FontAwesome6 name="map-pin" size={16} color="#6C63FF" />
-              </View>
-              <View style={styles.infoTextContainer}>
-                <Text style={styles.infoLabel}>存放位置</Text>
-                <Text style={styles.infoValue}>{item.location}</Text>
-              </View>
+          {/* Location：空间路径优先，点击进入级联选择器挂/改挂 */}
+          <TouchableOpacity style={styles.infoRow} onPress={() => setSpacePickerVisible(true)} activeOpacity={0.7}>
+            <View style={styles.infoIconContainer}>
+              <FontAwesome6 name={item.location_path ? 'boxes-stacked' : 'map-pin'} size={16} color="#6C63FF" />
             </View>
-          ) : null}
+            <View style={styles.infoTextContainer}>
+              <Text style={styles.infoLabel}>存放位置</Text>
+              {item.location_path ? (
+                <>
+                  <Text style={styles.infoValue}>{item.location_path}</Text>
+                  {item.location ? <Text style={styles.infoSubValue}>{item.location}</Text> : null}
+                </>
+              ) : (
+                <Text style={styles.infoValue}>{item.location || '未设置'}</Text>
+              )}
+              {!item.location_path && (
+                <Text style={styles.infoHint}>点击挂到空间隔层（房间 → 家具 → 隔层）</Text>
+              )}
+            </View>
+            {item.location_path ? (
+              <TouchableOpacity onPress={handleDetachSpace} hitSlop={8} style={{ padding: 6 }}>
+                <FontAwesome6 name="link-slash" size={14} color="#B2BEC3" />
+              </TouchableOpacity>
+            ) : (
+              <FontAwesome6 name="chevron-right" size={13} color="#C0C0C8" />
+            )}
+          </TouchableOpacity>
 
           {/* Tags */}
           {tagList.length > 0 ? (
@@ -491,6 +547,12 @@ export default function ItemDetailScreen() {
           </View>
         </View>
       </Modal>
+
+      <LocationPicker
+        visible={spacePickerVisible}
+        onClose={() => setSpacePickerVisible(false)}
+        onSelect={handleSelectSpace}
+      />
     </Screen>
   );
 }
@@ -720,6 +782,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#636E72',
     marginBottom: 2,
+  },
+  infoSubValue: {
+    fontSize: 13,
+    color: '#9EA0A5',
+    marginTop: 2,
+  },
+  infoHint: {
+    fontSize: 12,
+    color: '#6C63FF',
+    marginTop: 4,
   },
   infoValue: {
     fontSize: 15,
