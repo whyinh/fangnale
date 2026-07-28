@@ -553,9 +553,9 @@ export default function SpaceFurnitureScreen() {
         }
         onClose={() => setQuickVisible(false)}
         onSaved={() => {
-          setQuickVisible(false);
           fetchData();
         }}
+        onRetake={handleCaptureToLayer}
       />
     </Screen>
   );

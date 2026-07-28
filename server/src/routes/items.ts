@@ -530,6 +530,105 @@ router.post("/recognize", upload.single("photo"), async (req, res) => {
   }
 });
 
+// POST /api/v1/items/recognize-multi - AI 一拍多录：识别照片中的多个物品
+// FormData: photo (image)
+// 返回 { photo_key, items: [{ name, category_id, category_name }] }；识别失败降级 items 为空数组
+router.post("/recognize-multi", upload.single("photo"), async (req, res) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: "请上传照片" });
+      return;
+    }
+
+    // 1. 照片上传 S3（多件物品共用同一张全景照）
+    const { buffer, originalname, mimetype } = req.file;
+    const ext = originalname.split(".").pop() || "jpg";
+    const fileName = `items/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const photoKey = await storage.uploadFile({
+      fileContent: buffer,
+      fileName,
+      contentType: mimetype,
+    });
+
+    const visibleIds = await getVisibleOwnerIds(req.userId!);
+    const { data: catsRaw } = await client
+      .from("categories")
+      .select("id, name")
+      .in("owner_id", visibleIds)
+      .order("id");
+    const cats: CategoryBrief[] = (catsRaw || []) as CategoryBrief[];
+
+    interface MultiItem {
+      name: string;
+      category_id: number | null;
+      category_name: string;
+    }
+    let multiItems: MultiItem[] = [];
+
+    try {
+      const customHeaders = HeaderUtils.extractForwardHeaders(
+        req.headers as unknown as Record<string, string>
+      );
+      const llm = new LLMClient(new Config(), customHeaders);
+      const dataUri = `data:${mimetype || "image/jpeg"};base64,${buffer.toString("base64")}`;
+
+      const prompt = [
+        "你是一个物品识别助手。用户拍了一张区域照片（如打开的抽屉、柜子隔层、桌面），想批量记录里面的物品。",
+        "请识别照片中所有清晰可见、值得记录的独立物品，只返回一个 JSON 对象，不要输出任何其他文字：",
+        '{"items": [{"name": "物品名称", "category": "分类名"}, ...]}',
+        "要求：",
+        "- 只数能明确辨认的独立物品，忽略包装袋、纸张、杂物碎屑等无记录价值的东西",
+        "- 物品数量上限 12 件；如果画面太乱只能看清几件，就返回几件，不要硬凑",
+        '- name：简洁具体，2-8 个字（如"充电线""护照""口红"），不要包含位置描述',
+        `- category：优先从以下现有分类中原样选择一个：${cats.map((c) => c.name).join("、") || "（暂无分类）"}；都不合适可给简洁的新大类名（2-4个字），系统会自动创建`,
+        '- 如果完全无法辨认任何物品，items 返回空数组',
+      ].join("\n");
+
+      const response = await llm.invoke(
+        [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: dataUri, detail: "high" } },
+            ],
+          },
+        ],
+        { model: "doubao-seed-1-8-251228", temperature: 0.3 }
+      );
+
+      const parsed = extractJson(response.content);
+      if (Array.isArray(parsed.items)) {
+        // 逐件解析分类（同名去重 + 自动建类），限制 12 件
+        const seen = new Set<string>();
+        for (const raw of parsed.items.slice(0, 12)) {
+          if (!raw || typeof raw.name !== "string" || !raw.name.trim()) continue;
+          const itemName = raw.name.trim().slice(0, 30);
+          if (seen.has(itemName)) continue;
+          seen.add(itemName);
+          try {
+            const resolved = await resolveCategoryId(
+              req.userId!,
+              cats,
+              typeof raw.category === "string" ? raw.category : ""
+            );
+            multiItems.push({ name: itemName, category_id: resolved.id, category_name: resolved.name });
+          } catch {
+            multiItems.push({ name: itemName, category_id: null, category_name: "" });
+          }
+        }
+      }
+    } catch (llmError) {
+      console.error("多物品识别失败，降级为空清单:", llmError);
+    }
+
+    res.json({ photo_key: photoKey, items: multiItems });
+  } catch (error) {
+    console.error("POST /items/recognize-multi error:", error);
+    res.status(500).json({ error: "识别失败，请重试" });
+  }
+});
+
 // POST /api/v1/items/ask - AI 自然语言查找（SSE 流式输出）
 // Body: { question: string }
 router.post("/ask", async (req, res) => {

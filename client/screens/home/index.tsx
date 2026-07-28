@@ -708,6 +708,7 @@ export default function HomeScreen() {
           photoUri={quickSaveUri}
           onClose={() => setQuickSaveVisible(false)}
           onSaved={handleQuickSaved}
+          onRetake={handleQuickCapture}
         />
 
         {/* 批量操作栏 */}

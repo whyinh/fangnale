@@ -13,7 +13,9 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Animated,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { FontAwesome6 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
@@ -43,9 +45,30 @@ interface QuickSaveModalProps {
   presetSpace?: LocationSelection | null;
   onClose: () => void;
   onSaved: () => void;
+  /** 连拍"再来一件"：由父组件重新调相机，拍完后以新 photoUri 重新打开本弹窗 */
+  onRetake?: () => void;
 }
 
-export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSaved }: QuickSaveModalProps) {
+type CaptureMode = 'single' | 'multi';
+
+interface MultiItemRow {
+  name: string;
+  category_id: number | null;
+  category_name: string;
+  checked: boolean;
+}
+
+// 连拍 combo 文案：给连续录入即时称号反馈
+function comboTitle(n: number): string {
+  if (n <= 1) return '存好了！';
+  if (n === 2) return '二连击！';
+  if (n === 3) return '三连击！';
+  if (n === 4) return '四连击！';
+  if (n < 10) return `手感火热 x${n}`;
+  return `收纳大师 x${n}`;
+}
+
+export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSaved, onRetake }: QuickSaveModalProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [frequentLocations, setFrequentLocations] = useState<FrequentLocation[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
@@ -59,19 +82,39 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
   const [aiStatus, setAiStatus] = useState<AiStatus>('idle');
   const [saving, setSaving] = useState(false);
   const recognizeStartedFor = useRef<string | null>(null);
+  // 连拍与反馈
+  const [rapidFire, setRapidFire] = useState(false);
+  const [comboCount, setComboCount] = useState(0);
+  const [savedInfo, setSavedInfo] = useState<{ title: string; desc: string } | null>(null);
+  const successScale = useRef(new Animated.Value(0)).current;
+  // 一拍多录
+  const [mode, setMode] = useState<CaptureMode>('single');
+  const [multiItems, setMultiItems] = useState<MultiItemRow[]>([]);
+  const [multiStatus, setMultiStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
+  const multiStartedFor = useRef<string | null>(null);
 
   // Modal 打开时：重置状态 + 后台 AI 识别（含上传）+ 拉取分类和常用位置
+  // 连拍模式（rapidFire）：保留上一件的位置/空间，用户只需按快门
   useEffect(() => {
     if (!visible || !photoUri) return;
 
-    setLocation('');
-    setSpaceSel(presetSpace ?? null);
+    const keepCtx = rapidFire;
+    if (!keepCtx) {
+      setLocation('');
+      setSpaceSel(presetSpace ?? null);
+      setComboCount(0);
+      setSelectedCategory(null);
+    }
     setPickerVisible(false);
     setName('');
     setTags([]);
     setNewTag('');
     setPhotoKey(null);
     setAiStatus('idle');
+    setSavedInfo(null);
+    setMode('single');
+    setMultiItems([]);
+    setMultiStatus('idle');
 
     // 后台并行：照片上传 + AI 识别（用户选位置的同时 AI 已填好名称/标签/分类）
     if (recognizeStartedFor.current !== photoUri) {
@@ -256,9 +299,23 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
         await AsyncStorage.setItem(LAST_CATEGORY_KEY, String(selectedCategory));
       }
 
-      Toast.show({ type: 'success', text1: '存好了', text2: spaceSel?.path || location.trim() });
+      // 进球反馈：震动 + 弹跳动画 + combo 文案；不关闭弹窗，进入连拍成功页
+      try {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        // Web 端无震动能力，忽略
+      }
+      const nextCombo = comboCount + 1;
+      setComboCount(nextCombo);
+      setRapidFire(true);
+      successScale.setValue(0);
+      Animated.spring(successScale, { toValue: 1, friction: 4, tension: 80, useNativeDriver: true }).start();
+      const place = spaceSel?.path || location.trim();
+      setSavedInfo({
+        title: comboTitle(nextCombo),
+        desc: `${name.trim() || '物品'} → ${place}`,
+      });
       onSaved();
-      onClose();
     } catch (e) {
       console.error('Save failed:', e);
       Toast.show({ type: 'error', text1: '保存失败', text2: '请重试' });
@@ -267,7 +324,138 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
     }
   };
 
+  // 一拍多录：识别同一张全景照中的多个物品
+  const recognizeMulti = async () => {
+    if (!photoUri) return;
+    setMultiStatus('recognizing');
+    try {
+      const file = await createFormDataFile(photoUri, `multi_${Date.now()}.jpg`, 'image/jpeg');
+      const formData = new FormData();
+      formData.append('photo', file as any);
+
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：POST /api/v1/items/recognize-multi
+       * Body 参数：photo: File (FormData)
+       * 返回：{ photo_key: string, items: [{ name: string, category_id: number | null, category_name: string }] }
+       */
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/recognize-multi`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) throw new Error('multi recognize failed');
+      const data = await res.json();
+      if (data.photo_key) setPhotoKey(data.photo_key);
+      setMultiItems(
+        (data.items || []).map((it: { name: string; category_id: number | null; category_name: string }) => ({
+          ...it,
+          checked: true,
+        }))
+      );
+      setMultiStatus('done');
+    } catch (e) {
+      console.error('Multi recognize failed:', e);
+      setMultiStatus('failed');
+    }
+  };
+
+  const switchToMulti = () => {
+    setMode('multi');
+    if (multiStartedFor.current !== photoUri) {
+      multiStartedFor.current = photoUri;
+      recognizeMulti();
+    }
+  };
+
+  const toggleMultiItem = (idx: number) => {
+    setMultiItems((prev) => prev.map((it, i) => (i === idx ? { ...it, checked: !it.checked } : it)));
+  };
+
+  const removeMultiItem = (idx: number) => {
+    setMultiItems((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // 批量保存勾选的物品（共用同一张全景照与同一位置）
+  const handleSaveMulti = async () => {
+    const chosen = multiItems.filter((it) => it.checked);
+    if (chosen.length === 0) {
+      Toast.show({ type: 'info', text1: '至少勾选一件' });
+      return;
+    }
+    if (!location.trim() && !spaceSel) {
+      Toast.show({ type: 'info', text1: '选个位置', text2: '这批物品统一放到这个位置' });
+      return;
+    }
+    if (!photoKey) {
+      Toast.show({ type: 'info', text1: '照片还在上传中', text2: '稍等一秒再点' });
+      return;
+    }
+
+    setSaving(true);
+    let okCount = 0;
+    try {
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：POST /api/v1/items（逐件循环创建）
+       * Body 参数：name: string, category_id: number | null, location: string, location_id: number | null, tags: string, photo_key: string, note: string
+       */
+      await Promise.all(
+        chosen.map(async (it) => {
+          const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: it.name,
+              category_id: it.category_id,
+              location: location.trim(),
+              location_id: spaceSel?.location_id ?? null,
+              tags: '',
+              photo_key: photoKey,
+              note: '',
+            }),
+          });
+          if (res.ok) okCount += 1;
+        })
+      );
+      if (okCount === 0) throw new Error('all failed');
+
+      try {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        // Web 端忽略
+      }
+      setRapidFire(true);
+      successScale.setValue(0);
+      Animated.spring(successScale, { toValue: 1, friction: 4, tension: 80, useNativeDriver: true }).start();
+      const place = spaceSel?.path || location.trim();
+      setSavedInfo({
+        title: `一次存入 ${okCount} 件！`,
+        desc: `已放入「${place}」${okCount < chosen.length ? `（${chosen.length - okCount} 件失败）` : ''}`,
+      });
+      onSaved();
+    } catch (e) {
+      console.error('Multi save failed:', e);
+      Toast.show({ type: 'error', text1: '保存失败', text2: '请重试' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 连拍：再来一件（父组件重新调相机，拍完后以新 photoUri 重开本弹窗）
+  const handleRetake = () => {
+    if (onRetake) onRetake();
+  };
+
+  // 结束连拍，关闭弹窗
+  const handleFinish = () => {
+    setRapidFire(false);
+    setComboCount(0);
+    onClose();
+  };
+
   const saveDisabled = saving || aiStatus === 'recognizing' || !photoKey;
+  const multiCheckedCount = multiItems.filter((it) => it.checked).length;
+  const multiSaveDisabled = saving || multiStatus === 'recognizing' || !photoKey || multiCheckedCount === 0;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -321,11 +509,104 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
             </TouchableOpacity>
           </View>
 
+          {/* 保存成功页（连拍反馈）：覆盖内容区与保存按钮 */}
+          {savedInfo ? (
+            <View style={styles.successWrap}>
+              <Animated.View style={{ transform: [{ scale: successScale }] }}>
+                <View style={styles.successCircle}>
+                  <FontAwesome6 name="check" size={34} color="#FFFFFF" />
+                </View>
+              </Animated.View>
+              <Text style={styles.successTitle}>{savedInfo.title}</Text>
+              <Text style={styles.successDesc} numberOfLines={2}>{savedInfo.desc}</Text>
+              {comboCount >= 2 && (
+                <View style={styles.comboBadge}>
+                  <FontAwesome6 name="fire" size={12} color="#E17055" />
+                  <Text style={styles.comboBadgeText}>连续录入 {comboCount} 件</Text>
+                </View>
+              )}
+              {onRetake && (
+                <TouchableOpacity style={styles.retakeBtn} onPress={handleRetake} activeOpacity={0.85}>
+                  <FontAwesome6 name="camera" size={16} color="#FFFFFF" />
+                  <Text style={styles.retakeBtnText}>再来一件，放同一位置</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={styles.finishBtn} onPress={handleFinish} activeOpacity={0.7}>
+                <Text style={styles.finishBtnText}>完成</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+          <>
+          {/* 模式切换：单件 / 一片区域（多物品） */}
+          <View style={styles.modeSwitch}>
+            <TouchableOpacity
+              style={[styles.modeChip, mode === 'single' && styles.modeChipActive]}
+              onPress={() => setMode('single')}
+              activeOpacity={0.8}
+            >
+              <FontAwesome6 name="cube" size={12} color={mode === 'single' ? '#FFFFFF' : '#636E72'} />
+              <Text style={[styles.modeChipText, mode === 'single' && styles.modeChipTextActive]}>单件</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modeChip, mode === 'multi' && styles.modeChipActive]}
+              onPress={switchToMulti}
+              activeOpacity={0.8}
+            >
+              <FontAwesome6 name="layer-group" size={12} color={mode === 'multi' ? '#FFFFFF' : '#636E72'} />
+              <Text style={[styles.modeChipText, mode === 'multi' && styles.modeChipTextActive]}>一片区域</Text>
+            </TouchableOpacity>
+          </View>
+
           <ScrollView
             style={styles.bodyScroll}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+            {/* 一拍多录：物品清单（位置区与单件模式共用，在下方） */}
+            {mode === 'multi' && (
+              <View style={styles.multiWrap}>
+                {multiStatus === 'recognizing' && (
+                  <View style={styles.multiStatusRow}>
+                    <ActivityIndicator size="small" color="#6C63FF" />
+                    <Text style={styles.multiStatusText}>AI 正在清点这片区域…</Text>
+                  </View>
+                )}
+                {multiStatus === 'failed' && (
+                  <View style={styles.multiStatusRow}>
+                    <Text style={styles.multiStatusText}>识别失败，</Text>
+                    <TouchableOpacity onPress={recognizeMulti}><Text style={styles.multiRetryText}>点我重试</Text></TouchableOpacity>
+                  </View>
+                )}
+                {multiStatus === 'done' && multiItems.length === 0 && (
+                  <View style={styles.multiStatusRow}>
+                    <Text style={styles.multiStatusText}>没认出物品，换张角度更正、光线更好的试试</Text>
+                  </View>
+                )}
+                {multiStatus === 'done' && multiItems.length > 0 && (
+                  <>
+                    <Text style={styles.multiHint}>认出 {multiItems.length} 件，勾选要录入的：</Text>
+                    {multiItems.map((it, idx) => (
+                      <View key={`${it.name}_${idx}`} style={styles.multiRow}>
+                        <TouchableOpacity onPress={() => toggleMultiItem(idx)} hitSlop={8}>
+                          <View style={[styles.multiCheck, it.checked && styles.multiCheckActive]}>
+                            {it.checked && <FontAwesome6 name="check" size={11} color="#FFF" />}
+                          </View>
+                        </TouchableOpacity>
+                        <Text style={[styles.multiName, !it.checked && { color: '#B2BEC3' }]} numberOfLines={1}>{it.name}</Text>
+                        {it.category_name ? (
+                          <View style={styles.multiCatChip}>
+                            <Text style={styles.multiCatChipText} numberOfLines={1}>{it.category_name}</Text>
+                          </View>
+                        ) : null}
+                        <TouchableOpacity onPress={() => removeMultiItem(idx)} hitSlop={8}>
+                          <FontAwesome6 name="xmark" size={13} color="#C0C0C8" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </>
+                )}
+              </View>
+            )}
             {/* 位置快捷选择 */}
             {frequentLocations.length > 0 && (
               <View>
@@ -386,6 +667,8 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
               )}
             </TouchableOpacity>
 
+            {mode === 'single' && (
+            <>
             {/* 名称输入（选填，AI 自动填） */}
             <View style={styles.inputRow}>
               <FontAwesome6
@@ -457,13 +740,15 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
                 </View>
               </View>
             )}
+            </>
+            )}
           </ScrollView>
 
-          {/* 保存按钮 */}
+          {/* 保存按钮：单件存 1 件 / 多录批量存入 */}
           <TouchableOpacity
-            style={[styles.saveBtn, saveDisabled && styles.saveBtnDisabled]}
-            onPress={handleSave}
-            disabled={saveDisabled}
+            style={[styles.saveBtn, (mode === 'multi' ? multiSaveDisabled : saveDisabled) && styles.saveBtnDisabled]}
+            onPress={mode === 'multi' ? handleSaveMulti : handleSave}
+            disabled={mode === 'multi' ? multiSaveDisabled : saveDisabled}
             activeOpacity={0.8}
           >
             {saving ? (
@@ -471,10 +756,14 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
             ) : (
               <>
                 <FontAwesome6 name="check" size={16} color="#FFF" />
-                <Text style={styles.saveBtnText}>存好了</Text>
+                <Text style={styles.saveBtnText}>
+                {mode === 'multi' ? `全部存入（${multiCheckedCount}）` : '存好了'}
+              </Text>
               </>
             )}
           </TouchableOpacity>
+          </>
+          )}
         </View>
       </KeyboardAvoidingView>
       <LocationPicker
@@ -671,5 +960,178 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#FFF',
+  },
+  /* ===== 保存成功页（连拍进球反馈） ===== */
+  successWrap: {
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingTop: 48,
+    paddingBottom: 40,
+    gap: 12,
+  },
+  successCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#00B894',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#00B894',
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+    marginBottom: 8,
+  },
+  successTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#2D3436',
+  },
+  successDesc: {
+    fontSize: 14,
+    color: '#636E72',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  comboBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFF3EE',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    marginTop: 4,
+  },
+  comboBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#E17055',
+  },
+  retakeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#6C63FF',
+    borderRadius: 16,
+    paddingVertical: 15,
+    alignSelf: 'stretch',
+    marginTop: 20,
+    shadowColor: '#6C63FF',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  retakeBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  finishBtn: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    alignSelf: 'stretch',
+  },
+  finishBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#636E72',
+  },
+  /* ===== 模式切换 ===== */
+  modeSwitch: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 20,
+    marginBottom: 4,
+  },
+  modeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F0F0F5',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  modeChipActive: {
+    backgroundColor: '#6C63FF',
+  },
+  modeChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#636E72',
+  },
+  modeChipTextActive: {
+    color: '#FFFFFF',
+  },
+  /* ===== 一拍多录清单 ===== */
+  multiWrap: {
+    marginBottom: 12,
+  },
+  multiStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 20,
+  },
+  multiStatusText: {
+    fontSize: 14,
+    color: '#636E72',
+  },
+  multiRetryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#6C63FF',
+  },
+  multiHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#636E72',
+    marginBottom: 10,
+  },
+  multiRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#F8F8FA',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginBottom: 8,
+  },
+  multiCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#C0C0C8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  multiCheckActive: {
+    backgroundColor: '#6C63FF',
+    borderColor: '#6C63FF',
+  },
+  multiName: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2D3436',
+  },
+  multiCatChip: {
+    backgroundColor: '#EDEBFF',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    maxWidth: 90,
+  },
+  multiCatChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6C63FF',
   },
 });
