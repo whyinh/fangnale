@@ -39,11 +39,13 @@ interface FrequentLocation {
 interface QuickSaveModalProps {
   visible: boolean;
   photoUri: string | null;
+  /** 预设空间挂载（如从某个隔层"拍照放入"进入），用户可清除或改选 */
+  presetSpace?: LocationSelection | null;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSaveModalProps) {
+export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSaved }: QuickSaveModalProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [frequentLocations, setFrequentLocations] = useState<FrequentLocation[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
@@ -63,7 +65,7 @@ export function QuickSaveModal({ visible, photoUri, onClose, onSaved }: QuickSav
     if (!visible || !photoUri) return;
 
     setLocation('');
-    setSpaceSel(null);
+    setSpaceSel(presetSpace ?? null);
     setPickerVisible(false);
     setName('');
     setTags([]);

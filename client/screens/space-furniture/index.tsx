@@ -3,15 +3,19 @@ import {
   View,
   Text,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   StyleSheet,
+  Alert,
   ActivityIndicator,
   Modal,
   TextInput,
   Image,
   Animated,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { Screen } from '@/components/Screen';
+import { QuickSaveModal } from '@/components/QuickSaveModal';
 import { useFocusEffect } from 'expo-router';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { FontAwesome6 } from '@expo/vector-icons';
@@ -33,6 +37,14 @@ interface LayerInfo {
   name: string;
   grid_pos: number | null;
   item_count: number;
+}
+
+interface AllItem {
+  id: number;
+  name: string;
+  location: string;
+  location_id: number | null;
+  location_path: string | null;
 }
 
 interface SpaceItem {
@@ -82,6 +94,13 @@ export default function SpaceFurnitureScreen() {
   const [addVisible, setAddVisible] = useState(false);
   const [layerName, setLayerName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [quickUri, setQuickUri] = useState<string | null>(null);
+  const [quickVisible, setQuickVisible] = useState(false);
+  const [moveInVisible, setMoveInVisible] = useState(false);
+  const [allItems, setAllItems] = useState<AllItem[]>([]);
+  const [moveInSearch, setMoveInSearch] = useState('');
+  const [moveInBusyId, setMoveInBusyId] = useState<number | null>(null);
+  const [moveInLoading, setMoveInLoading] = useState(false);
 
   // 高亮格脉冲动画（进入页面时呼吸 4 次后静止，保持高亮边框）
   const pulse = useRef(new Animated.Value(0)).current;
@@ -182,6 +201,76 @@ export default function SpaceFurnitureScreen() {
       setSaving(false);
     }
   };
+
+  const activeLayerInfo = activeLayer !== null ? layers.find((l) => l.id === activeLayer) : null;
+
+  // 拍照放入当前隔层：拍照后打开极简保存（预设空间挂载）
+  const handleCaptureToLayer = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('权限不足', '需要相机权限才能拍照');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.8 });
+    if (!result.canceled && result.assets[0]) {
+      setQuickUri(result.assets[0].uri);
+      setQuickVisible(true);
+    }
+  };
+
+  // 打开移入弹窗：拉取全部物品
+  const openMoveIn = async () => {
+    setMoveInVisible(true);
+    setMoveInSearch('');
+    setMoveInLoading(true);
+    try {
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：GET /api/v1/items
+       * Query 参数：无
+       */
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`);
+      if (!res.ok) throw new Error();
+      setAllItems(await res.json());
+    } catch {
+      setAllItems([]);
+    } finally {
+      setMoveInLoading(false);
+    }
+  };
+
+  // 把现有物品移入当前隔层
+  const handleMoveIn = async (itemId: number) => {
+    if (activeLayer === null) return;
+    setMoveInBusyId(itemId);
+    try {
+      /**
+       * 服务端文件：server/src/routes/items.ts
+       * 接口：PUT /api/v1/items/:id
+       * Body 参数：location_id: number
+       */
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/${itemId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location_id: activeLayer }),
+      });
+      if (!res.ok) throw new Error();
+      setAllItems((prev) => prev.filter((it) => it.id !== itemId));
+      fetchData();
+      Toast.show({ type: 'success', text1: '已移入', text2: activeLayerInfo?.name || '' });
+    } catch {
+      Toast.show({ type: 'error', text1: '移入失败，请重试' });
+    } finally {
+      setMoveInBusyId(null);
+    }
+  };
+
+  // 移入候选：不在当前隔层的物品，按名称搜索
+  const moveInCandidates = allItems.filter((it) => {
+    if (it.location_id === activeLayer) return false;
+    if (moveInSearch.trim() && !it.name.toLowerCase().includes(moveInSearch.trim().toLowerCase())) return false;
+    return true;
+  });
 
   const displayItems = activeLayer === null ? items : items.filter((it) => it.layer_id === activeLayer);
   const activeLayerName = activeLayer === null ? null : layers.find((l) => l.id === activeLayer)?.name;
@@ -291,6 +380,24 @@ export default function SpaceFurnitureScreen() {
             </View>
           </View>
 
+          {/* 添加物品入口：选中某层时出现 */}
+          {activeLayer !== null && activeLayerInfo && (
+            <View style={styles.addBar}>
+              <TouchableOpacity style={styles.addBarBtn} onPress={handleCaptureToLayer} activeOpacity={0.8}>
+                <View style={[styles.addBarIcon, { backgroundColor: '#F0EFFF' }]}>
+                  <FontAwesome6 name="camera" size={15} color="#6C63FF" />
+                </View>
+                <Text style={styles.addBarText}>拍照放入此层</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.addBarBtn} onPress={openMoveIn} activeOpacity={0.8}>
+                <View style={[styles.addBarIcon, { backgroundColor: '#E6F7F5' }]}>
+                  <FontAwesome6 name="box-open" size={15} color="#0D9488" />
+                </View>
+                <Text style={styles.addBarText}>移入现有物品</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* 物品列表标题行 */}
           <View style={styles.itemsHeader}>
             <Text style={styles.itemsTitle}>
@@ -376,6 +483,80 @@ export default function SpaceFurnitureScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* 移入现有物品 Modal */}
+      <Modal visible={moveInVisible} transparent animationType="slide" onRequestClose={() => setMoveInVisible(false)}>
+        <View style={styles.moveOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setMoveInVisible(false)} />
+          <View style={styles.moveSheet}>
+            <View style={styles.moveHandle} />
+            <Text style={styles.modalTitle}>移入到「{activeLayerInfo?.name}」</Text>
+            <View style={styles.moveSearchRow}>
+              <FontAwesome6 name="magnifying-glass" size={13} color="#B2BEC3" />
+              <TextInput
+                style={styles.moveSearchInput}
+                value={moveInSearch}
+                onChangeText={setMoveInSearch}
+                placeholder="搜索物品名称"
+                placeholderTextColor="#B2BEC3"
+              />
+            </View>
+            {moveInLoading ? (
+              <ActivityIndicator size="small" color="#6C63FF" style={{ marginVertical: 32 }} />
+            ) : (
+              <FlatList
+                data={moveInCandidates}
+                keyExtractor={(it) => String(it.id)}
+                style={{ maxHeight: 360 }}
+                keyboardShouldPersistTaps="handled"
+                ListEmptyComponent={
+                  <Text style={styles.moveEmpty}>{allItems.length === 0 ? '还没有可移入的物品' : '没有匹配的物品'}</Text>
+                }
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.moveRow}
+                    onPress={() => handleMoveIn(item.id)}
+                    disabled={moveInBusyId === item.id}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.moveRowName} numberOfLines={1}>{item.name}</Text>
+                      {(item.location_path || item.location) ? (
+                        <Text style={styles.moveRowLoc} numberOfLines={1}>
+                          现在：{item.location_path || item.location}
+                        </Text>
+                      ) : (
+                        <Text style={styles.moveRowLoc}>现在：未设置位置</Text>
+                      )}
+                    </View>
+                    {moveInBusyId === item.id ? (
+                      <ActivityIndicator size="small" color="#6C63FF" />
+                    ) : (
+                      <FontAwesome6 name="arrow-right-to-bracket" size={14} color="#6C63FF" />
+                    )}
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* 拍照放入此层（预设空间挂载） */}
+      <QuickSaveModal
+        visible={quickVisible}
+        photoUri={quickUri}
+        presetSpace={
+          activeLayer !== null && activeLayerInfo
+            ? { location_id: activeLayer, path: `${node?.name || ''} / ${activeLayerInfo.name}` }
+            : null
+        }
+        onClose={() => setQuickVisible(false)}
+        onSaved={() => {
+          setQuickVisible(false);
+          fetchData();
+        }}
+      />
     </Screen>
   );
 }
@@ -654,6 +835,14 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 20,
   },
+  moveHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#E0E0E6',
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
   modalTitle: {
     fontSize: 17,
     fontWeight: '700',
@@ -693,6 +882,87 @@ const styles = StyleSheet.create({
     backgroundColor: '#6C63FF',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  addBar: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  addBarBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  addBarIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addBarText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2D3436',
+  },
+  moveOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  moveSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 28,
+  },
+  moveSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 44,
+    backgroundColor: '#F5F5F7',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  moveSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#2D3436',
+    paddingVertical: 0,
+  },
+  moveEmpty: {
+    textAlign: 'center',
+    fontSize: 13,
+    color: '#9EA0A5',
+    marginVertical: 28,
+  },
+  moveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#F0F0F4',
+  },
+  moveRowName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2D3436',
+  },
+  moveRowLoc: {
+    fontSize: 12,
+    color: '#9EA0A5',
+    marginTop: 2,
   },
   modalConfirmText: {
     fontSize: 15,

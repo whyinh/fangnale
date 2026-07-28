@@ -1,12 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
-  Modal,
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
   StyleSheet,
+  Animated,
 } from 'react-native';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { authFetch } from '@/utils/api';
@@ -104,12 +104,24 @@ export function LocationPicker({ visible, onClose, onSelect }: LocationPickerPro
     onClose();
   };
 
+  // 非 Modal 覆盖层实现：可在页面内或另一个 Modal（如 QuickSaveModal）内安全使用，
+  // 规避 iOS 嵌套 Modal 不显示的问题
+  const slideAnim = useRef(new Animated.Value(600)).current;
+
+  useEffect(() => {
+    if (visible) {
+      slideAnim.setValue(600);
+      Animated.timing(slideAnim, { toValue: 0, duration: 260, useNativeDriver: true }).start();
+    }
+  }, [visible, slideAnim]);
+
+  if (!visible) return null;
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
-        <View style={styles.sheet}>
-          <View style={styles.handle} />
+    <View style={styles.overlay}>
+      <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
+      <Animated.View style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}>
+        <View style={styles.handle} />
           <View style={styles.headerRow}>
             <Text style={styles.title}>选择空间位置</Text>
             <TouchableOpacity onPress={onClose} hitSlop={8}>
@@ -183,17 +195,18 @@ export function LocationPicker({ visible, onClose, onSelect }: LocationPickerPro
               <Text style={styles.confirmText}>就放在「{topNode.name}」</Text>
             </TouchableOpacity>
           )}
-        </View>
-      </View>
-    </Modal>
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   overlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'flex-end',
+    zIndex: 999,
+    elevation: 999,
   },
   sheet: {
     backgroundColor: '#FFFFFF',
