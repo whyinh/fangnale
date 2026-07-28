@@ -10,9 +10,9 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
-  Image,
   Animated,
 } from 'react-native';
+import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Screen } from '@/components/Screen';
 import { QuickSaveModal } from '@/components/QuickSaveModal';
@@ -305,7 +305,13 @@ export default function SpaceFurnitureScreen() {
     const inner = (
       <>
         {firstPhoto && photoUrls[firstPhoto.id] ? (
-          <Image source={{ uri: photoUrls[firstPhoto.id] }} style={wide ? styles.cellThumbRow : styles.cellThumb} />
+          <Image
+            source={{ uri: photoUrls[firstPhoto.id] }}
+            style={wide ? styles.cellThumbRow : styles.cellThumb}
+            contentFit="cover"
+            transition={200}
+            recyclingKey={`layer_${firstPhoto.id}`}
+          />
         ) : (
           <View style={[styles.cellIconWrap, wide && styles.cellIconWrapRow]}>
             <FontAwesome6
@@ -443,7 +449,13 @@ export default function SpaceFurnitureScreen() {
                 activeOpacity={0.75}
               >
                 {photoUrls[item.id] ? (
-                  <Image source={{ uri: photoUrls[item.id] }} style={styles.itemImage} />
+                  <Image
+                    source={{ uri: photoUrls[item.id] }}
+                    style={styles.itemImage}
+                    contentFit="cover"
+                    transition={200}
+                    recyclingKey={`sf_${item.id}`}
+                  />
                 ) : (
                   <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
                     <FontAwesome6 name="image" size={18} color="#B2BEC3" />
@@ -525,6 +537,9 @@ export default function SpaceFurnitureScreen() {
                 keyExtractor={(it) => String(it.id)}
                 style={{ maxHeight: 360 }}
                 keyboardShouldPersistTaps="handled"
+                initialNumToRender={10}
+                maxToRenderPerBatch={6}
+                windowSize={7}
                 ListEmptyComponent={
                   <Text style={styles.moveEmpty}>{allItems.length === 0 ? '还没有可移入的物品' : '没有匹配的物品'}</Text>
                 }

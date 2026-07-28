@@ -7,13 +7,13 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Image,
   ScrollView,
   Alert,
   ActivityIndicator,
   Modal,
   TextInput,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Screen } from '@/components/Screen';
 import { useFocusEffect } from 'expo-router';
 import { useSafeSearchParams, useSafeRouter } from '@/hooks/useSafeRouter';
@@ -362,7 +362,7 @@ export default function ItemDetailScreen() {
         {/* Photo */}
         <View style={styles.photoContainer}>
           {photoUrl ? (
-            <Image source={{ uri: photoUrl }} style={styles.photo} />
+            <Image source={{ uri: photoUrl }} style={styles.photo} contentFit="cover" transition={250} />
           ) : (
             <TouchableOpacity style={styles.photoPlaceholder} onPress={handleTakePhoto} disabled={uploading} activeOpacity={0.7}>
               {uploading ? (

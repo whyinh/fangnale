@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Image,
   Modal,
   ScrollView,
   ActivityIndicator,
@@ -15,6 +14,7 @@ import {
   Platform,
   Animated,
 } from 'react-native';
+import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { FontAwesome6 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -23,6 +23,8 @@ import { createFormDataFile } from '@/utils';
 
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 const LAST_CATEGORY_KEY = '@stashspot_last_category_id';
+const CATEGORIES_CACHE_KEY = '@stashspot_categories_cache_v1';
+const LOCATIONS_CACHE_KEY = '@stashspot_freq_locations_cache_v1';
 
 type AiStatus = 'idle' | 'recognizing' | 'done' | 'failed';
 
@@ -209,7 +211,31 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
     }
   };
 
+  // 应用分类数据：自动选中上次使用的分类；仅在当前无选中时兜底，
+  // 避免覆盖 AI 识别结果（接口快慢无序）或连拍沿用的分类
+  const applyCategories = async (list: Category[]) => {
+    setCategories(list);
+    const lastId = await AsyncStorage.getItem(LAST_CATEGORY_KEY);
+    const lastIdNum = lastId ? Number(lastId) : null;
+    const validLast = list.find((c) => c.id === lastIdNum);
+    setSelectedCategory((prev) => {
+      if (prev !== null) return prev;
+      if (validLast) return validLast.id;
+      return list.length > 0 ? list[0].id : null;
+    });
+  };
+
   const fetchCategories = async () => {
+    // 缓存优先：弹窗打开时秒出上次数据，网络返回后静默刷新
+    if (categories.length === 0) {
+      try {
+        const cached = await AsyncStorage.getItem(CATEGORIES_CACHE_KEY);
+        if (cached) {
+          const list = JSON.parse(cached) as Category[];
+          if (list.length > 0) await applyCategories(list);
+        }
+      } catch { /* 缓存读取失败忽略 */ }
+    }
     try {
       /**
        * 服务端文件：server/src/routes/categories.ts
@@ -217,24 +243,25 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
        */
       const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
       const data = await res.json();
-      setCategories(data);
-
-      // 自动选中上次使用的分类；仅在当前无选中时兜底，
-      // 避免覆盖 AI 识别结果（接口快慢无序）或连拍沿用的分类
-      const lastId = await AsyncStorage.getItem(LAST_CATEGORY_KEY);
-      const lastIdNum = lastId ? Number(lastId) : null;
-      const validLast = data.find((c: Category) => c.id === lastIdNum);
-      setSelectedCategory((prev) => {
-        if (prev !== null) return prev;
-        if (validLast) return validLast.id;
-        return data.length > 0 ? data[0].id : null;
-      });
+      const list = (Array.isArray(data) ? data : []) as Category[];
+      await applyCategories(list);
+      AsyncStorage.setItem(CATEGORIES_CACHE_KEY, JSON.stringify(list)).catch(() => {});
     } catch (e) {
       console.error('Failed to fetch categories:', e);
     }
   };
 
   const fetchFrequentLocations = async () => {
+    // 缓存优先：常用位置秒出，网络返回后静默刷新
+    if (frequentLocations.length === 0) {
+      try {
+        const cached = await AsyncStorage.getItem(LOCATIONS_CACHE_KEY);
+        if (cached) {
+          const list = JSON.parse(cached) as FrequentLocation[];
+          if (list.length > 0) setFrequentLocations(list);
+        }
+      } catch { /* 缓存读取失败忽略 */ }
+    }
     try {
       /**
        * 服务端文件：server/src/routes/items.ts
@@ -242,7 +269,9 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
        */
       const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/locations`);
       const data = await res.json();
-      setFrequentLocations(data);
+      const list = (Array.isArray(data) ? data : []) as FrequentLocation[];
+      setFrequentLocations(list);
+      AsyncStorage.setItem(LOCATIONS_CACHE_KEY, JSON.stringify(list)).catch(() => {});
     } catch (e) {
       console.error('Failed to fetch locations:', e);
     }
@@ -480,7 +509,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
           <View style={styles.headerRow}>
             <View>
               {photoUri ? (
-                <Image source={{ uri: photoUri }} style={styles.thumbnail} />
+                <Image source={{ uri: photoUri }} style={styles.thumbnail} contentFit="cover" transition={120} recyclingKey={photoUri} />
               ) : (
                 <View style={[styles.thumbnail, styles.thumbnailPlaceholder]}>
                   <FontAwesome6 name="image" size={20} color="#B2BEC3" />

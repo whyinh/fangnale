@@ -6,12 +6,12 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Image,
   ScrollView,
   Alert,
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Screen } from '@/components/Screen';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
 import { FontAwesome6 } from '@expo/vector-icons';
@@ -180,7 +180,7 @@ export default function AddItemScreen() {
         <View style={styles.photoSection}>
           {photoUri ? (
             <View style={styles.photoContainer}>
-              <Image source={{ uri: photoUri }} style={styles.photo} />
+              <Image source={{ uri: photoUri }} style={styles.photo} contentFit="cover" transition={150} />
               {uploading && (
                 <View style={styles.uploadOverlay}>
                   <ActivityIndicator color="#FFF" />

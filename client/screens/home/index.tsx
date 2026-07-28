@@ -9,7 +9,6 @@ import {
   FlatList,
   TouchableOpacity,
   StyleSheet,
-  Image,
   ActivityIndicator,
   Platform,
   ScrollView,
@@ -19,6 +18,7 @@ import {
   TouchableWithoutFeedback,
   Keyboard,
 } from 'react-native';
+import { Image } from 'expo-image';
 import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { useFocusEffect } from 'expo-router';
@@ -91,7 +91,14 @@ function GroupItemCard({
   return (
     <TouchableOpacity style={styles.groupCard} onPress={onPress} activeOpacity={0.7}>
       {photoUrl ? (
-        <Image source={{ uri: photoUrl }} style={styles.groupCardImage} />
+        <Image
+          source={{ uri: photoUrl }}
+          style={styles.groupCardImage}
+          contentFit="cover"
+          transition={180}
+          recyclingKey={String(item.id)}
+          cachePolicy="memory-disk"
+        />
       ) : (
         <View style={[styles.groupCardImage, styles.groupCardImagePlaceholder]}>
           <FontAwesome6 name="image" size={20} color="#B2BEC3" />
@@ -424,7 +431,14 @@ export default function HomeScreen() {
         </View>
       )}
       {photoUrls[item.id] ? (
-        <Image source={{ uri: photoUrls[item.id] }} style={styles.itemImage} />
+        <Image
+          source={{ uri: photoUrls[item.id] }}
+          style={styles.itemImage}
+          contentFit="cover"
+          transition={180}
+          recyclingKey={String(item.id)}
+          cachePolicy="memory-disk"
+        />
       ) : (
         <View style={styles.imagePlaceholder}>
           <FontAwesome6 name="image" size={24} color="#B2BEC3" />
@@ -676,6 +690,10 @@ export default function HomeScreen() {
             renderItem={renderItem}
             contentContainerStyle={[styles.itemsList, selectionMode && { paddingBottom: 120 }]}
             showsVerticalScrollIndicator={false}
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            updateCellsBatchingPeriod={40}
           />
         ) : (
           <FlatList
@@ -684,6 +702,10 @@ export default function HomeScreen() {
             renderItem={renderLocationGroup}
             contentContainerStyle={styles.itemsList}
             showsVerticalScrollIndicator={false}
+            initialNumToRender={8}
+            maxToRenderPerBatch={6}
+            windowSize={7}
+            updateCellsBatchingPeriod={40}
           />
         )}
 
