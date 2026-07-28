@@ -92,6 +92,9 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
   const [multiItems, setMultiItems] = useState<MultiItemRow[]>([]);
   const [multiStatus, setMultiStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
   const multiStartedFor = useRef<string | null>(null);
+  // 跟踪"当前照片"：连拍时旧照片的识别/上传响应晚到，必须丢弃，防止污染新照片数据
+  const photoUriRef = useRef(photoUri);
+  photoUriRef.current = photoUri;
 
   // Modal 打开时：重置状态 + 后台 AI 识别（含上传）+ 拉取分类和常用位置
   // 连拍模式（rapidFire）：保留上一件的位置/空间，用户只需按快门
@@ -146,6 +149,8 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
       });
       if (!res.ok) throw new Error('recognize failed');
       const data = await res.json();
+      // 连拍竞态防护：响应回来时用户已拍下一张，丢弃过期数据
+      if (photoUriRef.current !== uri) return;
 
       setPhotoKey(data.photo_key);
       // 用户已在输入则不覆盖（识别耗时 1-3 秒，尊重用户输入）
@@ -171,6 +176,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
         });
       }
     } catch (e) {
+      if (photoUriRef.current !== uri) return; // 已换新照片，旧响应直接丢弃
       console.error('Recognize failed, fallback to plain upload:', e);
       // 降级：识别接口不可用时走纯上传，不影响保存流程
       setAiStatus('failed');
@@ -195,6 +201,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
         body: formData,
       });
       const data = await res.json();
+      if (photoUriRef.current !== uri) return; // 已换新照片，丢弃过期上传结果
       setPhotoKey(data.key);
     } catch (e) {
       console.error('Upload failed:', e);
@@ -212,15 +219,16 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
       const data = await res.json();
       setCategories(data);
 
-      // 自动选中上次使用的分类（AI 识别完成后会覆盖为更准确的分类）
+      // 自动选中上次使用的分类；仅在当前无选中时兜底，
+      // 避免覆盖 AI 识别结果（接口快慢无序）或连拍沿用的分类
       const lastId = await AsyncStorage.getItem(LAST_CATEGORY_KEY);
       const lastIdNum = lastId ? Number(lastId) : null;
       const validLast = data.find((c: Category) => c.id === lastIdNum);
-      if (validLast) {
-        setSelectedCategory(validLast.id);
-      } else if (data.length > 0) {
-        setSelectedCategory(data[0].id);
-      }
+      setSelectedCategory((prev) => {
+        if (prev !== null) return prev;
+        if (validLast) return validLast.id;
+        return data.length > 0 ? data[0].id : null;
+      });
     } catch (e) {
       console.error('Failed to fetch categories:', e);
     }
@@ -327,9 +335,10 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
   // 一拍多录：识别同一张全景照中的多个物品
   const recognizeMulti = async () => {
     if (!photoUri) return;
+    const uri = photoUri; // 捕获当前照片，响应回来时校验是否已换
     setMultiStatus('recognizing');
     try {
-      const file = await createFormDataFile(photoUri, `multi_${Date.now()}.jpg`, 'image/jpeg');
+      const file = await createFormDataFile(uri, `multi_${Date.now()}.jpg`, 'image/jpeg');
       const formData = new FormData();
       formData.append('photo', file as any);
 
@@ -345,6 +354,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
       });
       if (!res.ok) throw new Error('multi recognize failed');
       const data = await res.json();
+      if (photoUriRef.current !== uri) return; // 已换新照片，丢弃过期清单
       if (data.photo_key) setPhotoKey(data.photo_key);
       setMultiItems(
         (data.items || []).map((it: { name: string; category_id: number | null; category_name: string }) => ({
@@ -354,6 +364,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
       );
       setMultiStatus('done');
     } catch (e) {
+      if (photoUriRef.current !== uri) return; // 已换新照片，旧响应直接丢弃
       console.error('Multi recognize failed:', e);
       setMultiStatus('failed');
     }
