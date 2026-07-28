@@ -118,6 +118,277 @@ router.get("/:id", async (req, res) => {
   res.json(data);
 });
 
+// POST /api/v1/items/organize/analyze - AI 整理分析（全量扫描，返回整理建议）
+// 响应: { merge_categories, recategorize, duplicates, stale, stats }
+router.post("/organize/analyze", async (req, res) => {
+  try {
+    const visibleIds = await getVisibleOwnerIds(req.userId!);
+    const { data: cats } = await client
+      .from("categories")
+      .select("id, name")
+      .in("owner_id", visibleIds)
+      .order("id");
+    // 上限 500 件防止超 LLM 上下文
+    const { data: items } = await client
+      .from("items")
+      .select("id, name, category_id, location, created_at")
+      .in("owner_id", visibleIds)
+      .order("id", { ascending: false })
+      .limit(500);
+
+    if (!items || items.length === 0) {
+      res.json({
+        merge_categories: [], recategorize: [], duplicates: [], stale: [],
+        stats: { items: 0, categories: (cats || []).length },
+      });
+      return;
+    }
+
+    const catName = new Map<number, string>((cats || []).map((c) => [c.id as number, c.name as string]));
+    const now = Date.now();
+    const itemLines = items.map((it) => {
+      const days = Math.floor((now - new Date(it.created_at as string).getTime()) / 86400000);
+      return `${it.id}|${it.name}|${catName.get(it.category_id as number) || "未知"}|${it.location || "无位置"}|记录${days}天`;
+    });
+
+    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as Record<string, string>);
+    const llm = new LLMClient(new Config(), customHeaders);
+    const response = await llm.invoke(
+      [
+        {
+          role: "system",
+          content: `你是家庭物品整理顾问。分析用户的物品清单，给出结构化整理建议。
+清单格式（每行）：物品ID|名称|分类|位置|记录天数
+现有分类：${(cats || []).map((c) => `${c.id}:${c.name}`).join("，")}
+物品清单：
+${itemLines.join("\n")}
+
+分析并只输出 JSON：
+{
+  "merge_categories": [{"from_id": 分类ID, "from_name": "", "to_id": 分类ID, "to_name": "", "reason": "一句话原因"}],
+  "recategorize": [{"item_id": 物品ID, "item_name": "", "to_category_id": 分类ID, "to_category": "", "reason": "一句话原因"}],
+  "duplicates": [{"item_ids": [物品ID数组], "name": "物品名", "reason": "一句话原因"}],
+  "stale": [{"item_id": 物品ID, "item_name": "", "reason": "一句话原因"}]
+}
+规则：
+- merge_categories：仅当两个分类语义明显重叠（如"数码配件"与"电子产品"），小类并入大类；没有就给空数组
+- recategorize：物品明显放错分类时给出，仅限高置信度，最多 20 条；to_category_id 必须是现有分类ID
+- duplicates：同名且位置相同/相近的疑似重复记录；没有就给空数组
+- stale：记录超过 180 天且通常属于低价值/易淘汰的物品（如旧数据线、过时票据、闲置小配件），最多 10 条
+- 所有 ID 必须来自上方清单，禁止编造；建议要克制，宁缺毋滥
+- 只输出 JSON，禁止任何其他文字`,
+        },
+        { role: "user", content: `共 ${items.length} 件物品、${(cats || []).length} 个分类，请给出整理建议。` },
+      ],
+      { model: "doubao-seed-1-8-251228", temperature: 0.2 }
+    );
+
+    // 解析 + 严格清洗（防 LLM 幻觉 ID）
+    const catIds = new Set((cats || []).map((c) => c.id as number));
+    const itemMap = new Map<number, { name: string; category_id: number }>(
+      items.map((it) => [it.id as number, { name: it.name as string, category_id: it.category_id as number }])
+    );
+    let mergeOut: unknown[] = [];
+    let recatOut: unknown[] = [];
+    let dupOut: unknown[] = [];
+    let staleOut: unknown[] = [];
+    try {
+      const parsed = extractJson(String(response.content || ""));
+      if (Array.isArray(parsed.merge_categories)) {
+        mergeOut = parsed.merge_categories
+          .filter((m) => {
+            const mm = m as Record<string, unknown>;
+            return catIds.has(Number(mm.from_id)) && catIds.has(Number(mm.to_id)) && Number(mm.from_id) !== Number(mm.to_id);
+          })
+          .slice(0, 10);
+      }
+      if (Array.isArray(parsed.recategorize)) {
+        recatOut = parsed.recategorize
+          .filter((r) => {
+            const rr = r as Record<string, unknown>;
+            const item = itemMap.get(Number(rr.item_id));
+            return item && catIds.has(Number(rr.to_category_id)) && item.category_id !== Number(rr.to_category_id);
+          })
+          .slice(0, 20);
+      }
+      if (Array.isArray(parsed.duplicates)) {
+        dupOut = parsed.duplicates
+          .map((d) => d as Record<string, unknown>)
+          .filter((d) => Array.isArray(d.item_ids) && (d.item_ids as unknown[]).length >= 2)
+          .map((d) => ({
+            ...d,
+            item_ids: (d.item_ids as unknown[]).map(Number).filter((id) => itemMap.has(id)),
+          }))
+          .filter((d) => (d.item_ids as number[]).length >= 2)
+          .slice(0, 10);
+      }
+      if (Array.isArray(parsed.stale)) {
+        staleOut = parsed.stale
+          .filter((s) => itemMap.has(Number((s as Record<string, unknown>).item_id)))
+          .slice(0, 10);
+      }
+    } catch (parseError) {
+      console.error("整理建议解析失败:", parseError);
+    }
+
+    res.json({
+      merge_categories: mergeOut,
+      recategorize: recatOut,
+      duplicates: dupOut,
+      stale: staleOut,
+      stats: { items: items.length, categories: (cats || []).length },
+    });
+  } catch (error) {
+    console.error("整理分析失败:", error);
+    res.status(500).json({ error: "整理分析失败，请稍后重试" });
+  }
+});
+
+// POST /api/v1/items/organize/apply - 执行整理动作
+// Body: { actions: Array<{ type: "merge_category", from_id: number, to_id: number } | { type: "recategorize", item_id: number, to_category_id: number } | { type: "delete_items", item_ids: number[] }> }
+router.post("/organize/apply", async (req, res) => {
+  const { actions } = req.body as { actions?: Array<Record<string, unknown>> };
+  if (!Array.isArray(actions) || actions.length === 0) {
+    res.status(400).json({ error: "请选择要执行的整理动作" });
+    return;
+  }
+  if (actions.length > 200) {
+    res.status(400).json({ error: "一次最多执行 200 条整理动作" });
+    return;
+  }
+
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
+  const results = { merged: 0, recategorized: 0, deleted: 0, failed: 0 };
+
+  // 预取可见分类用于校验
+  const { data: cats } = await client.from("categories").select("id").in("owner_id", visibleIds);
+  const catIds = new Set((cats || []).map((c) => c.id as number));
+
+  for (const action of actions) {
+    try {
+      if (action.type === "merge_category") {
+        const fromId = Number(action.from_id);
+        const toId = Number(action.to_id);
+        if (!catIds.has(fromId) || !catIds.has(toId) || fromId === toId) { results.failed++; continue; }
+        const { error: moveErr } = await client
+          .from("items")
+          .update({ category_id: toId })
+          .eq("category_id", fromId)
+          .in("owner_id", visibleIds);
+        if (moveErr) throw moveErr;
+        const { error: delErr } = await client
+          .from("categories")
+          .delete()
+          .eq("id", fromId)
+          .in("owner_id", visibleIds);
+        if (delErr) throw delErr;
+        results.merged++;
+      } else if (action.type === "recategorize") {
+        const itemId = Number(action.item_id);
+        const toCatId = Number(action.to_category_id);
+        if (!catIds.has(toCatId)) { results.failed++; continue; }
+        const { error } = await client
+          .from("items")
+          .update({ category_id: toCatId })
+          .eq("id", itemId)
+          .in("owner_id", visibleIds);
+        if (error) throw error;
+        results.recategorized++;
+      } else if (action.type === "delete_items") {
+        const ids = (Array.isArray(action.item_ids) ? action.item_ids : []).map(Number).filter((v) => Number.isFinite(v));
+        if (ids.length === 0) { results.failed++; continue; }
+        const { error } = await client
+          .from("items")
+          .delete()
+          .in("id", ids)
+          .in("owner_id", visibleIds);
+        if (error) throw error;
+        results.deleted += ids.length;
+      } else {
+        results.failed++;
+      }
+    } catch (actionError) {
+      console.error("整理动作执行失败:", action.type, actionError);
+      results.failed++;
+    }
+  }
+
+  res.json({ ok: true, results });
+});
+
+// POST /api/v1/items/batch - 批量操作
+// Body: { action: "recategorize" | "move" | "delete", item_ids: number[], category_id?: number, location?: string }
+router.post("/batch", async (req, res) => {
+  const { action, item_ids, category_id, location } = req.body as {
+    action?: string;
+    item_ids?: unknown[];
+    category_id?: number;
+    location?: string;
+  };
+  const ids = (Array.isArray(item_ids) ? item_ids : []).map(Number).filter((v) => Number.isFinite(v));
+  if (ids.length === 0) {
+    res.status(400).json({ error: "请选择要操作的物品" });
+    return;
+  }
+  if (ids.length > 200) {
+    res.status(400).json({ error: "一次最多操作 200 件物品" });
+    return;
+  }
+
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
+
+  if (action === "recategorize") {
+    const toCatId = Number(category_id);
+    const { data: cat } = await client
+      .from("categories")
+      .select("id")
+      .eq("id", toCatId)
+      .in("owner_id", visibleIds)
+      .maybeSingle();
+    if (!cat) {
+      res.status(400).json({ error: "目标分类不存在" });
+      return;
+    }
+    const { error } = await client.from("items").update({ category_id: toCatId }).in("id", ids).in("owner_id", visibleIds);
+    if (error) {
+      res.status(500).json({ error: "批量改分类失败" });
+      return;
+    }
+    res.json({ ok: true, affected: ids.length });
+    return;
+  }
+
+  if (action === "move") {
+    if (typeof location !== "string" || !location.trim()) {
+      res.status(400).json({ error: "请输入目标位置" });
+      return;
+    }
+    const { error } = await client
+      .from("items")
+      .update({ location: location.trim().slice(0, 50) })
+      .in("id", ids)
+      .in("owner_id", visibleIds);
+    if (error) {
+      res.status(500).json({ error: "批量移动失败" });
+      return;
+    }
+    res.json({ ok: true, affected: ids.length });
+    return;
+  }
+
+  if (action === "delete") {
+    const { error } = await client.from("items").delete().in("id", ids).in("owner_id", visibleIds);
+    if (error) {
+      res.status(500).json({ error: "批量删除失败" });
+      return;
+    }
+    res.json({ ok: true, affected: ids.length });
+    return;
+  }
+
+  res.status(400).json({ error: "不支持的操作类型" });
+});
+
 // POST /api/v1/items/recognize - AI 识别物品照片
 // FormData: photo (image)
 // 一次完成：照片上传 S3 + 多模态 LLM 识别，返回 { photo_key, name, tags, category_id }

@@ -14,7 +14,12 @@ import {
   Platform,
   ScrollView,
   Alert,
+  Modal,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
 } from 'react-native';
+import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { useFocusEffect } from 'expo-router';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
@@ -113,6 +118,11 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   // 已提交的搜索词：只有用户主动点搜索键/搜索图标时才更新，输入过程绝不触发请求
   const [submittedQuery, setSubmittedQuery] = useState('');
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchModal, setBatchModal] = useState<'category' | 'move' | null>(null);
+  const [moveInput, setMoveInput] = useState('');
+  const [batchBusy, setBatchBusy] = useState(false);
   // 智能搜索：字面匹配无结果时自动 fallback 到 AI 语义搜索
   const [smartSearching, setSmartSearching] = useState(false);
   const [smartMatched, setSmartMatched] = useState(false);
@@ -309,12 +319,93 @@ export default function HomeScreen() {
     fetchItems();
   };
 
-  const renderItem = ({ item }: { item: Item }) => (
+  const exitSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const enterSelection = useCallback((id: number) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([id]));
+  }, []);
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      if (next.size === 0) setSelectionMode(false);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    if (selectedIds.size === displayItems.length && displayItems.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(displayItems.map((it) => it.id)));
+    }
+  }, [selectedIds.size, displayItems]);
+
+  /**
+   * 服务端文件：server/src/routes/items.ts
+   * 接口：POST /api/v1/items/batch
+   * Body 参数：action: 'recategorize' | 'move' | 'delete', ids: number[], category_id?: number, location?: string
+   */
+  const runBatch = useCallback(
+    async (body: Record<string, unknown>) => {
+      const ids = Array.from(selectedIds);
+      if (ids.length === 0) return;
+      setBatchBusy(true);
+      try {
+        const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items/batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, ids }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setBatchModal(null);
+        setMoveInput('');
+        exitSelection();
+        fetchItems();
+        Toast.show({ type: 'success', text1: '批量操作完成' });
+      } catch {
+        Toast.show({ type: 'error', text1: '操作失败，请重试' });
+      } finally {
+        setBatchBusy(false);
+      }
+    },
+    [selectedIds, exitSelection]
+  );
+
+  const handleBatchDelete = useCallback(() => {
+    Alert.alert('批量删除', `确定删除选中的 ${selectedIds.size} 件物品吗？此操作不可恢复。`, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () => runBatch({ action: 'delete' }),
+      },
+    ]);
+  }, [selectedIds.size, runBatch]);
+
+  const renderItem = ({ item }: { item: Item }) => {
+    const isSelected = selectedIds.has(item.id);
+    return (
     <TouchableOpacity
-      style={styles.itemCard}
-      onPress={() => router.push(`/item-detail`, { id: item.id })}
+      style={[styles.itemCard, selectionMode && isSelected && styles.itemCardSelected]}
+      onPress={() => (selectionMode ? toggleSelect(item.id) : router.push(`/item-detail`, { id: item.id }))}
+      onLongPress={() => {
+        if (!selectionMode && viewMode === 'all') enterSelection(item.id);
+      }}
+      delayLongPress={350}
       activeOpacity={0.7}
     >
+      {selectionMode && (
+        <View style={[styles.selectCircle, isSelected && styles.selectCircleActive]}>
+          {isSelected && <FontAwesome6 name="check" size={11} color="#FFF" />}
+        </View>
+      )}
       {photoUrls[item.id] ? (
         <Image source={{ uri: photoUrls[item.id] }} style={styles.itemImage} />
       ) : (
@@ -355,7 +446,8 @@ export default function HomeScreen() {
         ) : null}
       </View>
     </TouchableOpacity>
-  );
+    );
+  };
 
   const renderLocationGroup = ({ item: group }: { item: LocationGroup }) => (
     <View style={styles.groupSection}>
@@ -393,11 +485,39 @@ export default function HomeScreen() {
       <View style={{ flex: 1 }}>
         {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-          <Text style={styles.headerTitle}>放哪了</Text>
-          <Text style={styles.headerSubtitle}>你的物品，一目了然</Text>
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headerTitle}>放哪了</Text>
+              <Text style={styles.headerSubtitle}>你的物品，一目了然</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.organizeBtn}
+              onPress={() => router.push('/organize')}
+              activeOpacity={0.75}
+            >
+              <FontAwesome6 name="wand-magic-sparkles" size={12} color="#6C63FF" />
+              <Text style={styles.organizeBtnText}>整理</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
+        {/* 选择模式工具栏 */}
+        {selectionMode && (
+          <View style={styles.selectionBar}>
+            <TouchableOpacity onPress={exitSelection} hitSlop={8}>
+              <FontAwesome6 name="xmark" size={18} color="#636E72" />
+            </TouchableOpacity>
+            <Text style={styles.selectionCount}>已选 {selectedIds.size} 项</Text>
+            <TouchableOpacity onPress={toggleSelectAll} hitSlop={8}>
+              <Text style={styles.selectionAllText}>
+                {selectedIds.size === displayItems.length && displayItems.length > 0 ? '取消全选' : '全选'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Search Bar + AI 问 + 视图切换 */}
+        {!selectionMode && (
         <View style={styles.searchContainer}>
           <View style={styles.searchBar}>
             <TouchableOpacity onPress={handleSearch} hitSlop={8}>
@@ -445,6 +565,7 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        )}
 
         {/* 临期提醒横幅 */}
         {expiringItems.length > 0 && (
@@ -536,7 +657,7 @@ export default function HomeScreen() {
             data={displayItems}
             keyExtractor={(item) => String(item.id)}
             renderItem={renderItem}
-            contentContainerStyle={styles.itemsList}
+            contentContainerStyle={[styles.itemsList, selectionMode && { paddingBottom: 120 }]}
             showsVerticalScrollIndicator={false}
           />
         ) : (
@@ -550,22 +671,26 @@ export default function HomeScreen() {
         )}
 
         {/* 语音速记/语音查找入口（相机 FAB 上方） */}
-        <TouchableOpacity
-          style={[styles.voiceFab, { bottom: 164 + (Platform.OS === 'ios' ? insets.bottom : 0) }]}
-          onPress={() => setShowVoicePanel(true)}
-          activeOpacity={0.85}
-        >
-          <FontAwesome6 name="microphone" size={20} color="#FFF" />
-        </TouchableOpacity>
+        {!selectionMode && (
+          <TouchableOpacity
+            style={[styles.voiceFab, { bottom: 164 + (Platform.OS === 'ios' ? insets.bottom : 0) }]}
+            onPress={() => setShowVoicePanel(true)}
+            activeOpacity={0.85}
+          >
+            <FontAwesome6 name="microphone" size={20} color="#FFF" />
+          </TouchableOpacity>
+        )}
 
         {/* 浮动拍照按钮（FAB） */}
-        <TouchableOpacity
-          style={[styles.fab, { bottom: 92 + (Platform.OS === 'ios' ? insets.bottom : 0) }]}
-          onPress={handleQuickCapture}
-          activeOpacity={0.85}
-        >
-          <FontAwesome6 name="camera" size={24} color="#FFF" />
-        </TouchableOpacity>
+        {!selectionMode && (
+          <TouchableOpacity
+            style={[styles.fab, { bottom: 92 + (Platform.OS === 'ios' ? insets.bottom : 0) }]}
+            onPress={handleQuickCapture}
+            activeOpacity={0.85}
+          >
+            <FontAwesome6 name="camera" size={24} color="#FFF" />
+          </TouchableOpacity>
+        )}
 
         {/* 语音面板（速记 + 语音查找） */}
         <VoicePanel
@@ -583,6 +708,115 @@ export default function HomeScreen() {
           onSaved={handleQuickSaved}
         />
 
+        {/* 批量操作栏 */}
+        {selectionMode && (
+          <View style={[styles.batchBar, { paddingBottom: insets.bottom + 12 }]}>
+            <TouchableOpacity
+              style={styles.batchBtn}
+              onPress={() => setBatchModal('category')}
+              activeOpacity={0.75}
+            >
+              <FontAwesome6 name="folder-open" size={16} color="#6C63FF" />
+              <Text style={styles.batchBtnText}>改分类</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.batchBtn}
+              onPress={() => setBatchModal('move')}
+              activeOpacity={0.75}
+            >
+              <FontAwesome6 name="map-pin" size={16} color="#0D9488" />
+              <Text style={styles.batchBtnText}>移位置</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.batchBtn}
+              onPress={handleBatchDelete}
+              disabled={batchBusy}
+              activeOpacity={0.75}
+            >
+              {batchBusy ? (
+                <ActivityIndicator size="small" color="#E17055" />
+              ) : (
+                <FontAwesome6 name="trash-can" size={16} color="#E17055" />
+              )}
+              <Text style={[styles.batchBtnText, { color: '#E17055' }]}>删除</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* 批量改分类弹窗 */}
+        <Modal
+          visible={batchModal === 'category'}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setBatchModal(null)}
+        >
+          <View style={styles.batchOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setBatchModal(null)} />
+            <View style={[styles.batchSheet, { paddingBottom: insets.bottom + 16 }]}>
+              <View style={styles.batchHandle} />
+              <Text style={styles.batchSheetTitle}>移动到分类（{selectedIds.size} 件）</Text>
+              <ScrollView style={{ maxHeight: 320 }}>
+                {categories.map((c) => (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={styles.batchSheetRow}
+                    onPress={() => runBatch({ action: 'recategorize', category_id: c.id })}
+                    disabled={batchBusy}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.batchCatIcon}>
+                      <FontAwesome6 name="tag" size={13} color="#6C63FF" />
+                    </View>
+                    <Text style={styles.batchCatName}>{c.name}</Text>
+                    <FontAwesome6 name="chevron-right" size={12} color="#C0C0C8" />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* 批量移位置弹窗 */}
+        <Modal
+          visible={batchModal === 'move'}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setBatchModal(null)}
+        >
+          <KeyboardAvoidingView
+            style={styles.batchOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setBatchModal(null)} />
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+              <View style={[styles.batchSheet, { paddingBottom: insets.bottom + 16 }]}>
+                <View style={styles.batchHandle} />
+                <Text style={styles.batchSheetTitle}>移动到位置（{selectedIds.size} 件）</Text>
+                <TextInput
+                  style={styles.batchInput}
+                  value={moveInput}
+                  onChangeText={setMoveInput}
+                  placeholder="例如：储藏室、衣柜顶层"
+                  placeholderTextColor="#9EA0A5"
+                  maxLength={50}
+                />
+                <TouchableOpacity
+                  style={[styles.batchConfirmBtn, (!moveInput.trim() || batchBusy) && styles.batchConfirmBtnDisabled]}
+                  onPress={() => runBatch({ action: 'move', location: moveInput.trim() })}
+                  disabled={!moveInput.trim() || batchBusy}
+                  activeOpacity={0.8}
+                >
+                  {batchBusy ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text style={styles.batchConfirmText}>确认移动</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </KeyboardAvoidingView>
+        </Modal>
+
         {/* AI 问一问（条件渲染，每次提问重新挂载以重置状态） */}
         {askVisible && askQuestion ? (
           <AskModal question={askQuestion} onClose={() => setAskVisible(false)} />
@@ -597,6 +831,156 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingBottom: 16,
     backgroundColor: '#F0F0F3',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  organizeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#F0EFFF',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 32,
+    marginTop: 4,
+  },
+  organizeBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6C63FF',
+  },
+  selectionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  selectionCount: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2D3436',
+  },
+  selectionAllText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6C63FF',
+  },
+  itemCardSelected: {
+    borderColor: '#6C63FF',
+    borderWidth: 1.5,
+  },
+  selectCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#C0C0C8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    alignSelf: 'center',
+  },
+  selectCircleActive: {
+    backgroundColor: '#6C63FF',
+    borderColor: '#6C63FF',
+  },
+  batchBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#ECECF1',
+    paddingTop: 12,
+    paddingHorizontal: 24,
+    justifyContent: 'space-around',
+  },
+  batchBtn: {
+    alignItems: 'center',
+    gap: 5,
+    minWidth: 72,
+  },
+  batchBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2D3436',
+  },
+  batchOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  batchSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+  },
+  batchHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#E0E0E6',
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  batchSheetTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2D3436',
+    marginBottom: 12,
+  },
+  batchSheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#F0F0F4',
+  },
+  batchCatIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#F0EFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  batchCatName: {
+    flex: 1,
+    fontSize: 15,
+    color: '#2D3436',
+  },
+  batchInput: {
+    height: 52,
+    backgroundColor: '#F5F5F7',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    fontSize: 15,
+    color: '#2D3436',
+  },
+  batchConfirmBtn: {
+    height: 50,
+    borderRadius: 14,
+    backgroundColor: '#6C63FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 14,
+  },
+  batchConfirmBtnDisabled: {
+    opacity: 0.5,
+  },
+  batchConfirmText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   headerTitle: {
     fontSize: 28,
