@@ -206,16 +206,32 @@ export default function SpaceFurnitureScreen() {
 
   // 拍照放入当前隔层：拍照后打开极简保存（预设空间挂载）
   const handleCaptureToLayer = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('权限不足', '需要相机权限才能拍照');
-      return;
+    if (activeLayer === null || !activeLayerInfo) return;
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('权限不足', '需要相机权限才能拍照');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.8 });
+      if (!result.canceled && result.assets[0]) {
+        setQuickUri(result.assets[0].uri);
+        setQuickVisible(true);
+      }
+    } catch (e) {
+      // iOS 上相机异常（如临时文件读取失败）时静默降级，避免 unhandled rejection
+      console.error('Camera failed:', e);
+      Toast.show({ type: 'error', text1: '相机打开失败', text2: '请重试一次' });
     }
-    const result = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.8 });
-    if (!result.canceled && result.assets[0]) {
-      setQuickUri(result.assets[0].uri);
-      setQuickVisible(true);
-    }
+  };
+
+  // 连拍"再来一件"：iOS 上 Modal 显示中直接开相机会导致照片读取失败、
+  // 相机关闭后 Modal 被系统重新 present（弹窗反复弹出）。先关弹窗再拉起相机。
+  const handleRetakeToLayer = () => {
+    setQuickVisible(false);
+    setTimeout(() => {
+      void handleCaptureToLayer();
+    }, 450);
   };
 
   // 打开移入弹窗：拉取全部物品
@@ -555,7 +571,7 @@ export default function SpaceFurnitureScreen() {
         onSaved={() => {
           fetchData();
         }}
-        onRetake={handleCaptureToLayer}
+        onRetake={handleRetakeToLayer}
       />
     </Screen>
   );
