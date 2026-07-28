@@ -393,7 +393,7 @@ export default function HomeScreen() {
       <View style={{ flex: 1 }}>
         {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-          <Text style={styles.headerTitle}>StashSpot</Text>
+          <Text style={styles.headerTitle}>放哪了</Text>
           <Text style={styles.headerSubtitle}>你的物品，一目了然</Text>
         </View>
 

@@ -414,7 +414,7 @@ export default function ProfileScreen() {
           <Text style={styles.signOutText}>退出登录</Text>
         </TouchableOpacity>
 
-        <Text style={styles.versionText}>StashSpot v1.0.0</Text>
+        <Text style={styles.versionText}>放哪了 v1.0.0</Text>
       </ScrollView>
 
       {/* 修改昵称弹窗 */}
