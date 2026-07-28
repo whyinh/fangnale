@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Modal,
   TextInput,
   Image,
+  Animated,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { useFocusEffect } from 'expo-router';
@@ -18,6 +19,14 @@ import { authFetch } from '@/utils/api';
 import Toast from 'react-native-toast-message';
 
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
+
+interface NodeInfo {
+  id: number;
+  name: string;
+  type: 'room' | 'furniture' | 'layer';
+  template: string | null;
+  cols: number | null;
+}
 
 interface LayerInfo {
   id: number;
@@ -31,36 +40,78 @@ interface SpaceItem {
   name: string;
   photo_key: string | null;
   location_id: number | null;
+  location_path?: string;
   layer_id: number | null;
   layer_name: string | null;
   categories?: { id: number; name: string } | null;
 }
 
-// 家具详情：隔层网格 + 物品列表（空间树第三级）
+// 家具图标映射（与后端模板一致）
+const TEMPLATE_ICONS: Record<string, string> = {
+  wardrobe: 'door-closed',
+  drawer_chest: 'box-archive',
+  bookshelf: 'book',
+  shelf: 'layer-group',
+  cabinet: 'boxes-stacked',
+  desk: 'laptop',
+  bedside: 'bed',
+  fridge: 'snowflake',
+  shoe_rack: 'shoe-prints',
+  box: 'box-open',
+};
+
+// 家具详情（V2）：家具格子视图（按模板布局）+ 高亮定位 + 物品列表
 export default function SpaceFurnitureScreen() {
   const router = useSafeRouter();
-  const { id, name } = useSafeSearchParams<{ id: number; name: string }>();
+  const { id, name, highlightLayer, highlightItem } = useSafeSearchParams<{
+    id: number;
+    name?: string;
+    highlightLayer?: number;
+    highlightItem?: number;
+  }>();
   const furnitureId = Number(id);
+  const hlLayer = highlightLayer ? Number(highlightLayer) : null;
+  const hlItem = highlightItem ? Number(highlightItem) : null;
 
+  const [node, setNode] = useState<NodeInfo | null>(null);
   const [layers, setLayers] = useState<LayerInfo[]>([]);
   const [items, setItems] = useState<SpaceItem[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
-  const [activeLayer, setActiveLayer] = useState<number | null>(null); // null = 全部
+  const [activeLayer, setActiveLayer] = useState<number | null>(hlLayer);
   const [addVisible, setAddVisible] = useState(false);
   const [layerName, setLayerName] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // 高亮格脉冲动画（进入页面时呼吸 4 次后静止，保持高亮边框）
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!hlLayer) return;
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 550, useNativeDriver: false }),
+        Animated.timing(pulse, { toValue: 0, duration: 550, useNativeDriver: false }),
+      ]),
+      { iterations: 4 }
+    );
+    anim.start();
+    return () => anim.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hlLayer]);
+  const pulseBorder = pulse.interpolate({ inputRange: [0, 1], outputRange: ['#6C63FF', '#C9C4FF'] });
+  const pulseBg = pulse.interpolate({ inputRange: [0, 1], outputRange: ['#F7F6FF', '#E9E6FF'] });
 
   const fetchData = useCallback(async () => {
     try {
       /**
        * 服务端文件：server/src/routes/locations.ts
        * 接口：GET /api/v1/locations/:id/items
-       * 返回：{ layers: LayerInfo[], items: SpaceItem[] }
+       * 返回：{ node: NodeInfo, layers: LayerInfo[], items: SpaceItem[] }
        */
       const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/locations/${furnitureId}/items`);
       if (res.ok) {
         const data = await res.json();
+        setNode(data.node || null);
         setLayers(data.layers || []);
         setItems(data.items || []);
 
@@ -134,6 +185,75 @@ export default function SpaceFurnitureScreen() {
 
   const displayItems = activeLayer === null ? items : items.filter((it) => it.layer_id === activeLayer);
   const activeLayerName = activeLayer === null ? null : layers.find((l) => l.id === activeLayer)?.name;
+  const cols = node?.cols === 1 ? 1 : 2; // 默认 2 列
+  const furnitureIcon = TEMPLATE_ICONS[node?.template || ''] || 'box';
+  const title = node?.name || name || '家具';
+
+  // 渲染单个隔层格（高亮格用 Animated 包裹）
+  const renderCell = (layer: LayerInfo) => {
+    const active = activeLayer === layer.id;
+    const isHighlight = hlLayer === layer.id;
+    const layerItems = items.filter((it) => it.layer_id === layer.id);
+    const firstPhoto = layerItems.find((it) => it.photo_key && photoUrls[it.id]);
+    const wide = cols === 1;
+
+    const inner = (
+      <>
+        {firstPhoto && photoUrls[firstPhoto.id] ? (
+          <Image source={{ uri: photoUrls[firstPhoto.id] }} style={wide ? styles.cellThumbRow : styles.cellThumb} />
+        ) : (
+          <View style={[styles.cellIconWrap, wide && styles.cellIconWrapRow]}>
+            <FontAwesome6
+              name={layer.item_count > 0 ? 'grip-lines' : 'plus'}
+              size={16}
+              color={active ? '#6C63FF' : '#C0C0C8'}
+            />
+          </View>
+        )}
+        <View style={wide ? styles.cellTextRow : styles.cellTextCol}>
+          <Text style={[styles.cellName, active && styles.cellNameActive, wide && styles.cellNameRow]} numberOfLines={1}>
+            {layer.name}
+          </Text>
+          <Text style={styles.cellCount}>{layer.item_count} 件</Text>
+        </View>
+        {wide && active && <FontAwesome6 name="circle-check" size={16} color="#6C63FF" />}
+      </>
+    );
+
+    const cellStyle = [
+      styles.cell,
+      wide ? styles.cellWide : styles.cellHalf,
+      active && styles.cellActive,
+      layer.item_count === 0 && !isHighlight && styles.cellEmpty,
+    ];
+
+    if (isHighlight) {
+      return (
+        <Animated.View
+          key={layer.id}
+          style={[cellStyle, { borderColor: pulseBorder, backgroundColor: pulseBg, borderWidth: 2 }]}
+        >
+          <TouchableOpacity
+            style={[styles.cellInner, wide && styles.cellInnerRow]}
+            onPress={() => setActiveLayer(active ? null : layer.id)}
+            activeOpacity={0.75}
+          >
+            {inner}
+          </TouchableOpacity>
+        </Animated.View>
+      );
+    }
+    return (
+      <TouchableOpacity
+        key={layer.id}
+        style={cellStyle}
+        onPress={() => setActiveLayer(active ? null : layer.id)}
+        activeOpacity={0.75}
+      >
+        <View style={[styles.cellInner, wide && styles.cellInnerRow]}>{inner}</View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <Screen style={styles.screen}>
@@ -143,7 +263,7 @@ export default function SpaceFurnitureScreen() {
           <FontAwesome6 name="chevron-left" size={18} color="#2D3436" />
         </TouchableOpacity>
         <View style={styles.headerBody}>
-          <Text style={styles.headerTitle} numberOfLines={1}>{name || '家具'}</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
           <Text style={styles.headerSubtitle}>{layers.length} 个隔层 · {items.length} 件物品</Text>
         </View>
         <TouchableOpacity onPress={() => setAddVisible(true)} hitSlop={8} style={styles.addLayerBtn}>
@@ -157,55 +277,30 @@ export default function SpaceFurnitureScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* 隔层网格 */}
-          <View style={styles.grid}>
-            {/* 「全部」格 */}
-            <TouchableOpacity
-              style={[styles.cell, activeLayer === null && styles.cellActive]}
-              onPress={() => setActiveLayer(null)}
-              activeOpacity={0.75}
-            >
-              <View style={styles.cellIconWrap}>
-                <FontAwesome6 name="border-all" size={18} color={activeLayer === null ? '#6C63FF' : '#9EA0A5'} />
+          {/* 家具格子视图：外框模拟柜体，格子按模板布局 */}
+          <View style={styles.frame}>
+            <View style={styles.frameHeader}>
+              <View style={styles.frameIconWrap}>
+                <FontAwesome6 name={furnitureIcon} size={14} color="#A0845C" />
               </View>
-              <Text style={[styles.cellName, activeLayer === null && styles.cellNameActive]}>全部</Text>
-              <Text style={styles.cellCount}>{items.length} 件</Text>
-            </TouchableOpacity>
-
-            {layers.map((layer) => {
-              const active = activeLayer === layer.id;
-              const layerItems = items.filter((it) => it.layer_id === layer.id);
-              const firstPhoto = layerItems.find((it) => it.photo_key && photoUrls[it.id]);
-              return (
-                <TouchableOpacity
-                  key={layer.id}
-                  style={[styles.cell, active && styles.cellActive, layer.item_count === 0 && styles.cellEmpty]}
-                  onPress={() => setActiveLayer(active ? null : layer.id)}
-                  activeOpacity={0.75}
-                >
-                  {firstPhoto && photoUrls[firstPhoto.id] ? (
-                    <Image source={{ uri: photoUrls[firstPhoto.id] }} style={styles.cellThumb} />
-                  ) : (
-                    <View style={styles.cellIconWrap}>
-                      <FontAwesome6
-                        name={layer.item_count > 0 ? 'grip-lines' : 'plus'}
-                        size={16}
-                        color={active ? '#6C63FF' : '#C0C0C8'}
-                      />
-                    </View>
-                  )}
-                  <Text style={[styles.cellName, active && styles.cellNameActive]} numberOfLines={1}>
-                    {layer.name}
-                  </Text>
-                  <Text style={styles.cellCount}>{layer.item_count} 件</Text>
-                </TouchableOpacity>
-              );
-            })}
+              <Text style={styles.frameTitle} numberOfLines={1}>{title}</Text>
+              <Text style={styles.frameHint}>点格子看里面</Text>
+            </View>
+            <View style={[styles.grid, cols === 1 && styles.gridSingle]}>
+              {layers.map(renderCell)}
+            </View>
           </View>
 
-          {/* 物品列表 */}
+          {/* 物品列表标题行 */}
           <View style={styles.itemsHeader}>
-            <Text style={styles.itemsTitle}>{activeLayerName ? `「${activeLayerName}」里的物品` : '全部物品'}</Text>
+            <Text style={styles.itemsTitle}>
+              {activeLayerName ? `「${activeLayerName}」里的物品` : '全部物品'}
+            </Text>
+            {activeLayer !== null && (
+              <TouchableOpacity onPress={() => setActiveLayer(null)} hitSlop={8}>
+                <Text style={styles.showAllText}>查看全部</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {displayItems.length === 0 ? (
@@ -220,7 +315,7 @@ export default function SpaceFurnitureScreen() {
             displayItems.map((item) => (
               <TouchableOpacity
                 key={item.id}
-                style={styles.itemCard}
+                style={[styles.itemCard, hlItem === item.id && styles.itemCardHighlight]}
                 onPress={() => router.push('/item-detail', { id: item.id })}
                 activeOpacity={0.75}
               >
@@ -238,7 +333,14 @@ export default function SpaceFurnitureScreen() {
                     {item.layer_name ? ` · ${item.layer_name}` : ''}
                   </Text>
                 </View>
-                <FontAwesome6 name="chevron-right" size={12} color="#C0C0C8" />
+                {hlItem === item.id ? (
+                  <View style={styles.locatedBadge}>
+                    <FontAwesome6 name="location-crosshairs" size={11} color="#FFFFFF" />
+                    <Text style={styles.locatedBadgeText}>在这</Text>
+                  </View>
+                ) : (
+                  <FontAwesome6 name="chevron-right" size={12} color="#C0C0C8" />
+                )}
               </TouchableOpacity>
             ))
           )}
@@ -328,19 +430,50 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 40,
   },
+  // 家具外框：暖棕柜体感
+  frame: {
+    backgroundColor: 'rgba(160,132,92,0.08)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(160,132,92,0.28)',
+    borderRadius: 22,
+    padding: 12,
+  },
+  frameHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 4,
+    paddingBottom: 10,
+  },
+  frameIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    backgroundColor: 'rgba(160,132,92,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  frameTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#7A6547',
+  },
+  frameHint: {
+    fontSize: 11,
+    color: '#B49B7A',
+  },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
   },
+  gridSingle: {
+    flexDirection: 'column',
+  },
   cell: {
-    width: '31.5%',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    gap: 5,
     borderWidth: 1.5,
     borderColor: 'transparent',
     shadowColor: '#6C63FF',
@@ -348,6 +481,25 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 1,
+  },
+  cellHalf: {
+    width: '47.5%',
+  },
+  cellWide: {
+    width: '100%',
+  },
+  cellInner: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    gap: 5,
+  },
+  cellInnerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    gap: 12,
   },
   cellActive: {
     borderColor: '#6C63FF',
@@ -364,6 +516,11 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 12,
   },
+  cellThumbRow: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+  },
   cellIconWrap: {
     width: 44,
     height: 44,
@@ -372,11 +529,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  cellIconWrapRow: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+  },
+  cellTextCol: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  cellTextRow: {
+    flex: 1,
+    gap: 1,
+  },
   cellName: {
     fontSize: 12,
     fontWeight: '600',
     color: '#2D3436',
     maxWidth: '100%',
+  },
+  cellNameRow: {
+    fontSize: 14,
   },
   cellNameActive: {
     color: '#6C63FF',
@@ -388,11 +561,19 @@ const styles = StyleSheet.create({
   itemsHeader: {
     marginTop: 22,
     marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   itemsTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: '#2D3436',
+  },
+  showAllText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6C63FF',
   },
   emptyItems: {
     alignItems: 'center',
@@ -416,6 +597,12 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 12,
     marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  itemCardHighlight: {
+    borderColor: '#6C63FF',
+    backgroundColor: '#F7F6FF',
   },
   itemImage: {
     width: 52,
@@ -429,6 +616,7 @@ const styles = StyleSheet.create({
   },
   itemBody: {
     flex: 1,
+    gap: 2,
   },
   itemName: {
     fontSize: 15,
@@ -438,14 +626,27 @@ const styles = StyleSheet.create({
   itemSub: {
     fontSize: 12,
     color: '#9EA0A5',
-    marginTop: 3,
+  },
+  locatedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#6C63FF',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  locatedBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 32,
+    padding: 24,
   },
   modalCard: {
     width: '100%',
@@ -460,25 +661,25 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   modalInput: {
-    height: 50,
+    height: 48,
     backgroundColor: '#F5F5F7',
-    borderRadius: 14,
-    paddingHorizontal: 16,
+    borderRadius: 12,
+    paddingHorizontal: 14,
     fontSize: 15,
     color: '#2D3436',
   },
   modalActions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     marginTop: 16,
   },
   modalCancel: {
     flex: 1,
     height: 46,
-    borderRadius: 14,
+    borderRadius: 12,
+    backgroundColor: '#F5F5F7',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F5F5F7',
   },
   modalCancelText: {
     fontSize: 15,
@@ -488,14 +689,14 @@ const styles = StyleSheet.create({
   modalConfirm: {
     flex: 1,
     height: 46,
-    borderRadius: 14,
+    borderRadius: 12,
+    backgroundColor: '#6C63FF',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#6C63FF',
   },
   modalConfirmText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#FFF',
+    color: '#FFFFFF',
   },
 });

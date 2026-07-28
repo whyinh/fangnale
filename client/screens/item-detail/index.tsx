@@ -1,5 +1,6 @@
 import { authFetch } from '@/utils/api';
 import { LocationPicker } from '@/components/LocationPicker';
+import Toast from 'react-native-toast-message';
 import React, { useState, useCallback } from 'react';
 import {
   View,
@@ -131,6 +132,40 @@ export default function ItemDetailScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, fetchItem]);
+
+  const [locating, setLocating] = useState(false);
+
+  // 定位到空间：跳转 房间 → 家具（高亮目标隔层与当前物品）
+  const handleLocateInSpace = useCallback(async () => {
+    if (!item?.location_id) return;
+    setLocating(true);
+    try {
+      /**
+       * 服务端文件：server/src/routes/locations.ts
+       * 接口：GET /api/v1/locations/:id/path
+       * 返回：Array<{ id: number, type: 'room' | 'furniture' | 'layer', name: string }>
+       */
+      const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/locations/${item.location_id}/path`);
+      if (!res.ok) throw new Error();
+      const chain = (await res.json()) as { id: number; type: string; name: string }[];
+      const room = chain.find((n) => n.type === 'room');
+      const furniture = chain.find((n) => n.type === 'furniture');
+      const layer = chain.find((n) => n.type === 'layer');
+      if (room) router.push('/space-room', { id: room.id, name: room.name });
+      if (furniture) {
+        const params: Record<string, number | string> = { id: furniture.id, name: furniture.name, highlightItem: item.id };
+        if (layer) params.highlightLayer = layer.id;
+        router.push('/space-furniture', params);
+      } else if (!room) {
+        Toast.show({ type: 'error', text1: '空间数据异常' });
+      }
+    } catch {
+      Toast.show({ type: 'error', text1: '定位失败，请重试' });
+    } finally {
+      setLocating(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.location_id, item?.id, router]);
 
   // 摘除空间挂载
   const handleDetachSpace = useCallback(async () => {
@@ -379,7 +414,11 @@ export default function ItemDetailScreen() {
           </View>
 
           {/* Location：空间路径优先，点击进入级联选择器挂/改挂 */}
-          <TouchableOpacity style={styles.infoRow} onPress={() => setSpacePickerVisible(true)} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.infoRow}
+            onPress={item.location_path ? handleLocateInSpace : () => setSpacePickerVisible(true)}
+            activeOpacity={0.7}
+          >
             <View style={styles.infoIconContainer}>
               <FontAwesome6 name={item.location_path ? 'boxes-stacked' : 'map-pin'} size={16} color="#6C63FF" />
             </View>
@@ -389,6 +428,7 @@ export default function ItemDetailScreen() {
                 <>
                   <Text style={styles.infoValue}>{item.location_path}</Text>
                   {item.location ? <Text style={styles.infoSubValue}>{item.location}</Text> : null}
+                  <Text style={styles.infoHint}>点击在空间中定位它</Text>
                 </>
               ) : (
                 <Text style={styles.infoValue}>{item.location || '未设置'}</Text>
@@ -398,9 +438,18 @@ export default function ItemDetailScreen() {
               )}
             </View>
             {item.location_path ? (
-              <TouchableOpacity onPress={handleDetachSpace} hitSlop={8} style={{ padding: 6 }}>
-                <FontAwesome6 name="link-slash" size={14} color="#B2BEC3" />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {locating ? (
+                  <ActivityIndicator size="small" color="#6C63FF" style={{ padding: 6 }} />
+                ) : (
+                  <TouchableOpacity onPress={() => setSpacePickerVisible(true)} hitSlop={8} style={{ padding: 6 }}>
+                    <FontAwesome6 name="pen" size={13} color="#B2BEC3" />
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={handleDetachSpace} hitSlop={8} style={{ padding: 6 }}>
+                  <FontAwesome6 name="link-slash" size={14} color="#B2BEC3" />
+                </TouchableOpacity>
+              </View>
             ) : (
               <FontAwesome6 name="chevron-right" size={13} color="#C0C0C8" />
             )}

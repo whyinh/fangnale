@@ -5,6 +5,7 @@ import {
   FURNITURE_TEMPLATES,
   buildLocationTree,
   buildPathMap,
+  buildChain,
   collectNodeIds,
   type LocationRow,
 } from "../utils/location-tree.js";
@@ -67,6 +68,7 @@ router.get("/:id/items", async (req, res) => {
     res.status(404).json({ error: "空间不存在或无权限查看" });
     return;
   }
+  const node = rows.find((r) => r.id === id)!;
   const nodeIds = collectNodeIds(id, rows);
   const pathMap = buildPathMap(rows);
 
@@ -80,12 +82,39 @@ router.get("/:id/items", async (req, res) => {
     .limit(200);
   if (error) throw new Error(`查询空间物品失败: ${error.message}`);
 
-  res.json(
-    (items || []).map((it) => ({
+  const itemRows = (items || []) as { location_id: number }[];
+  // 直接子隔层（家具详情页格子视图用），附实时物品计数
+  const childLayers = rows
+    .filter((r) => r.parent_id === id && r.type === "layer")
+    .sort((a, b) => (a.grid_pos ?? 0) - (b.grid_pos ?? 0))
+    .map((l) => ({
+      id: l.id,
+      name: l.name,
+      grid_pos: l.grid_pos,
+      item_count: itemRows.filter((it) => it.location_id === l.id).length,
+    }));
+  const layerIdSet = new Set(childLayers.map((l) => l.id));
+  const layerNameMap = new Map(rows.filter((r) => r.type === "layer").map((r) => [r.id, r.name]));
+
+  res.json({
+    node: {
+      id: node.id,
+      name: node.name,
+      type: node.type,
+      template: node.template,
+      cols:
+        node.type === "furniture" && node.template
+          ? FURNITURE_TEMPLATES.find((t) => t.key === node.template)?.cols ?? null
+          : null,
+    },
+    layers: childLayers,
+    items: itemRows.map((it) => ({
       ...it,
-      location_path: pathMap.get((it as { location_id: number }).location_id) || "",
-    }))
-  );
+      location_path: pathMap.get(it.location_id) || "",
+      layer_id: layerIdSet.has(it.location_id) ? it.location_id : null,
+      layer_name: layerNameMap.get(it.location_id) || null,
+    })),
+  });
 });
 
 // POST /api/v1/locations/rooms - 创建房间
@@ -233,6 +262,28 @@ router.put("/:id", async (req, res) => {
     throw new Error(`重命名失败: ${error.message}`);
   }
   res.json(data);
+});
+
+// GET /api/v1/locations/:id/path - 祖先链（房间 → 家具 → 隔层），供"定位到空间"跳转
+// 注意：必须定义在 DELETE /:id 之前不影响（方法不同），但与 GET /:id/items 同级无冲突
+router.get("/:id/path", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "无效的节点ID" });
+    return;
+  }
+  const visibleIds = await getVisibleOwnerIds(req.userId!);
+  const { data: rows, error } = await client
+    .from("locations")
+    .select("id, owner_id, parent_id, type, name, template, grid_pos, sort")
+    .in("owner_id", visibleIds);
+  if (error) throw new Error(`查询空间失败: ${error.message}`);
+  const chain = buildChain((rows || []) as LocationRow[], id);
+  if (!chain) {
+    res.status(404).json({ error: "节点不存在" });
+    return;
+  }
+  res.json(chain.map((n) => ({ id: n.id, type: n.type, name: n.name, parent_id: n.parent_id })));
 });
 
 // DELETE /api/v1/locations/:id - 删除节点（子节点级联删除，挂在上面的物品自动脱离空间，不会被删）
