@@ -101,8 +101,10 @@ let itemId;
 // 9. 节点物品列表（含子孙）
 {
   const r = await api('GET', `/api/v1/locations/${furnitureId}/items`);
-  assert(r.status === 200 && r.data.length === 1 && r.data[0].name === '护照', '家具下物品列表返回护照');
-  assert(r.data[0].location_path === '主卧 / 衣柜 / 顶层搁板', '物品列表含路径');
+  // V2 契约：返回 { node, layers, items }
+  assert(r.status === 200 && Array.isArray(r.data.items) && r.data.items.length === 1 && r.data.items[0].name === '护照', '家具下物品列表返回护照');
+  assert(r.data.items[0].location_path === '主卧 / 衣柜 / 顶层搁板', '物品列表含路径');
+  assert(r.data.node && Array.isArray(r.data.layers), 'V2 契约含 node 与 layers');
 }
 
 // 10. 非法 location_id 静默忽略
