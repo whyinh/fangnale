@@ -21,9 +21,9 @@ import { FontAwesome6 } from '@expo/vector-icons';
 import { Screen } from '@/components/Screen';
 import { useAuth } from '@/contexts/AuthContext';
 
-// 与 Supabase Auth 配置保持一致的应用图标与名称
-const APP_ICON_URL =
-  'https://coze-coding-project.tos.coze.site/gen_project_icon/2026-07-28/7667241492628422698_1785177754.png?sign=4907255132-a1fae8a669-0-5a9065abea1a8e997c0875a49c6c9f57c94800fa73160ffa94409f00cf16f0a1';
+// 应用图标与名称
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const APP_ICON = require('@/assets/images/icon.png');
 const APP_NAME = '放哪了';
 
 type Method = 'phone' | 'email';
@@ -52,7 +52,7 @@ export default function LoginScreen() {
         <View style={styles.container}>
           {/* 品牌区 */}
           <View style={styles.brand}>
-            <Image source={{ uri: APP_ICON_URL }} style={styles.appIcon} />
+            <Image source={APP_ICON} style={styles.appIcon} />
             <Text style={styles.appName}>{APP_NAME}</Text>
             <Text style={styles.appSlogan}>你的物品，一目了然</Text>
           </View>
