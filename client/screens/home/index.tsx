@@ -17,6 +17,7 @@ import {
   KeyboardAvoidingView,
   TouchableWithoutFeedback,
   Keyboard,
+  Share,
 } from 'react-native';
 import { Image } from 'expo-image';
 import Toast from 'react-native-toast-message';
@@ -339,6 +340,18 @@ export default function HomeScreen() {
     }, 450);
   };
 
+  // 分享给朋友（裂变获客）
+  const handleShare = async () => {
+    try {
+      await Share.share({
+        message:
+          '我以前总是找不到家里的东西，现在用「放哪了」拍张照就能让 AI 记住物品位置，找东西问一句就有答案。推荐给你试试！',
+      });
+    } catch {
+      // 用户取消分享，无需处理
+    }
+  };
+
   const handleQuickSaved = () => {
     fetchItems();
   };
@@ -521,6 +534,13 @@ export default function HomeScreen() {
               <Text style={styles.headerTitle}>放哪了</Text>
               <Text style={styles.headerSubtitle}>你的物品，一目了然</Text>
             </View>
+            <TouchableOpacity
+              style={styles.shareButton}
+              onPress={handleShare}
+              activeOpacity={0.7}
+            >
+              <FontAwesome6 name="share-nodes" size={15} color="#6C63FF" />
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.organizeBtn}
               onPress={() => router.push('/organize')}
@@ -876,6 +896,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
+  },
+  shareButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 12,
+    backgroundColor: '#F0EFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
   },
   organizeBtn: {
     flexDirection: 'row',
