@@ -152,19 +152,22 @@ export default function PaywallScreen() {
                       onPress={() => setSelected(id)}
                       activeOpacity={0.8}
                     >
-                      {id === 'yearly' && (
-                        <View style={styles.planBadge}>
-                          <Text style={styles.planBadgeText}>推荐</Text>
+                      {p.badge ? (
+                        <View style={[styles.planBadge, id === 'lifetime' && styles.planBadgeGold]}>
+                          <Text style={styles.planBadgeText}>{p.badge}</Text>
                         </View>
-                      )}
+                      ) : null}
                       <View style={[styles.radio, active && styles.radioActive]}>
                         {active && <View style={styles.radioDot} />}
                       </View>
-                      <View style={{ flex: 1 }}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
                         <Text style={styles.planTitle}>{p.title}</Text>
                         <Text style={styles.planDesc}>{p.desc}</Text>
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
+                        {p.originalPrice ? (
+                          <Text style={styles.planOriginalPrice}>{p.originalPrice}</Text>
+                        ) : null}
                         <Text style={styles.planPrice}>
                           {p.price}
                           <Text style={styles.planUnit}>{p.unit}</Text>
@@ -186,7 +189,9 @@ export default function PaywallScreen() {
                   <ActivityIndicator color="#FFF" />
                 ) : (
                   <Text style={styles.subscribeText}>
-                    {selected === 'yearly' ? '¥45 开通年度会员' : '¥6 开通月度会员'}
+                    {selected === 'lifetime'
+                      ? '¥168 买断终身会员'
+                      : `${PLANS[selected].price} 开通${PLANS[selected].title}`}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -284,6 +289,8 @@ const styles = StyleSheet.create({
   radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: ACCENT },
   planTitle: { fontSize: 15, fontWeight: '700', color: '#1A1A2E' },
   planDesc: { fontSize: 12, color: '#9C9CAE', marginTop: 2 },
+  planBadgeGold: { backgroundColor: '#B8860B' },
+  planOriginalPrice: { fontSize: 12, color: '#B2B0C8', textDecorationLine: 'line-through', marginBottom: 2 },
   planPrice: { fontSize: 20, fontWeight: '800', color: '#1A1A2E' },
   planUnit: { fontSize: 12, fontWeight: '500', color: '#9C9CAE' },
   subscribeBtn: {

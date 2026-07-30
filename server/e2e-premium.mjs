@@ -53,6 +53,17 @@ d = await r.json();
 check('状态已切换为会员', d.isPremium === true);
 check('会员配额不限', d.quota.itemsLimit === null && d.quota.asksDailyLimit === null, JSON.stringify(d.quota));
 
+console.log('== 3.5 终身套餐 ==');
+r = await fetch(`${BASE}/api/v1/premium/dev-activate`, {
+  method: 'POST', headers: H, body: JSON.stringify({ plan: 'lifetime' }),
+});
+d = await r.json();
+check('lifetime 开通 200', r.status === 200, JSON.stringify(d));
+check('lifetime 无到期时间', d.ok === true && d.plan === 'lifetime' && d.expiresAt === null, JSON.stringify(d));
+r = await fetch(`${BASE}/api/v1/premium/`, { headers: H });
+d = await r.json();
+check('lifetime 会员有效', d.isPremium === true && d.plan === 'lifetime');
+
 console.log('== 4. 开发模式关闭会员（回退免费态） ==');
 r = await fetch(`${BASE}/api/v1/premium/dev-deactivate`, { method: 'POST', headers: H });
 check('dev-deactivate 200', r.status === 200);

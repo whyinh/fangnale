@@ -68,10 +68,11 @@ router.post("/dev-activate", requireAuth, async (req, res) => {
   try {
     const userId = req.userId!;
     const rawPlan = req.body?.plan;
-    if (rawPlan !== undefined && rawPlan !== "monthly" && rawPlan !== "yearly") {
+    if (rawPlan !== undefined && rawPlan !== "monthly" && rawPlan !== "yearly" && rawPlan !== "lifetime") {
       return res.status(400).json({ error: "无效的套餐类型", code: "INVALID_PLAN" });
     }
-    const plan = rawPlan === "yearly" ? "yearly" : "monthly";
+    const plan = rawPlan === "lifetime" ? "lifetime" : rawPlan === "yearly" ? "yearly" : "monthly";
+    // 终身会员无到期时间；月度 30 天，年度 365 天
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + (plan === "yearly" ? 365 : 30));
 
@@ -81,13 +82,13 @@ router.post("/dev-activate", requireAuth, async (req, res) => {
       plan,
       status: "active",
       provider: "dev_grant",
-      expires_at: expiresAt.toISOString(),
+      expires_at: plan === "lifetime" ? null : expiresAt.toISOString(),
     });
     if (error) {
       console.error("[premium] 开发模式开通失败:", error.message);
       return res.status(500).json({ error: "开通失败，请重试" });
     }
-    res.json({ ok: true, plan, expiresAt: expiresAt.toISOString() });
+    res.json({ ok: true, plan, expiresAt: plan === "lifetime" ? null : expiresAt.toISOString() });
   } catch (error: any) {
     console.error("[premium] 开发模式开通异常:", error?.message);
     res.status(500).json({ error: "开通失败，请重试" });

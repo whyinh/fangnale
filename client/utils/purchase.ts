@@ -10,11 +10,41 @@ import { authFetch } from '@/utils/api';
 
 const API_BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL || '';
 
-export type PlanId = 'monthly' | 'yearly';
+export type PlanId = 'yearly' | 'lifetime' | 'monthly';
 
-export const PLANS: Record<PlanId, { title: string; price: string; unit: string; desc: string }> = {
-  monthly: { title: '月度会员', price: '¥6', unit: '/月', desc: '按月订阅，随时取消' },
-  yearly: { title: '年度会员', price: '¥45', unit: '/年', desc: '约 ¥3.75/月，省 38%' },
+export interface PlanInfo {
+  title: string;
+  price: string;
+  unit: string;
+  desc: string;
+  /** 划线原价（仅优惠价档位） */
+  originalPrice?: string;
+  /** 角标文案 */
+  badge?: string;
+}
+
+export const PLANS: Record<PlanId, PlanInfo> = {
+  yearly: {
+    title: '年度会员',
+    price: '¥45',
+    unit: '/年',
+    originalPrice: '¥88',
+    badge: '早鸟价',
+    desc: '月均 ¥3.75 · 首发限时，随时恢复原价',
+  },
+  lifetime: {
+    title: '终身买断',
+    price: '¥168',
+    unit: '',
+    badge: '一次买断',
+    desc: '一次付费，终身使用，再无续费',
+  },
+  monthly: {
+    title: '月度会员',
+    price: '¥12',
+    unit: '/月',
+    desc: '按月订阅，随时取消',
+  },
 };
 
 /** 订阅指定套餐，成功后会员立即生效 */
@@ -22,7 +52,7 @@ export async function purchasePlan(plan: PlanId): Promise<void> {
   /**
    * 服务端文件：server/src/routes/premium.ts
    * 接口：POST /api/v1/premium/dev-activate
-   * Body 参数：plan: 'monthly' | 'yearly'
+   * Body 参数：plan: 'monthly' | 'yearly' | 'lifetime'
    */
   const res = await authFetch(`${API_BASE}/api/v1/premium/dev-activate`, {
     method: 'POST',
