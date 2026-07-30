@@ -1,4 +1,5 @@
 import { authFetch } from '@/utils/api';
+import { photoProxyUrl } from '@/utils/photo';
 import { LocationPicker } from '@/components/LocationPicker';
 import Toast from 'react-native-toast-message';
 import React, { useState, useCallback } from 'react';
@@ -81,15 +82,9 @@ export default function ItemDetailScreen() {
       const data = await res.json();
       setItem(data);
 
-      // Fetch photo URL
+      // 同步构造照片代理 URL（零网络请求，URL 稳定保证 expo-image 缓存命中）
       if (data.photo_key) {
-        const photoRes = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo-url`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: data.photo_key }),
-        });
-        const photoData = await photoRes.json();
-        setPhotoUrl(photoData.url);
+        setPhotoUrl(photoProxyUrl(data.photo_key));
       }
 
       // Check if this item was viewed before - if so, prompt to re-photo

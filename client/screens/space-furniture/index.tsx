@@ -20,6 +20,7 @@ import { useFocusEffect } from 'expo-router';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { authFetch } from '@/utils/api';
+import { photoProxyUrl } from '@/utils/photo';
 import Toast from 'react-native-toast-message';
 
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
@@ -137,32 +138,15 @@ export default function SpaceFurnitureScreen() {
         setLayers(data.layers || []);
         setItems(data.items || []);
 
-        // 异步补齐照片签名 URL
-        (data.items || []).forEach(async (item: SpaceItem) => {
+        // 同步构造照片代理 URL（零网络请求，URL 稳定保证 expo-image 缓存命中）
+        let urlChanged = false;
+        for (const item of data.items || []) {
           if (item.photo_key && !photoUrlsRef.current[item.id]) {
-            try {
-              /**
-               * 服务端文件：server/src/routes/upload.ts
-               * 接口：POST /api/v1/upload/photo-url
-               * Body 参数：key: string
-               */
-              const photoRes = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo-url`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ key: item.photo_key }),
-              });
-              if (photoRes.ok) {
-                const { url } = await photoRes.json();
-                if (!photoUrlsRef.current[item.id]) {
-                  photoUrlsRef.current = { ...photoUrlsRef.current, [item.id]: url };
-                  setPhotoUrls(photoUrlsRef.current);
-                }
-              }
-            } catch {
-              // 单张失败忽略
-            }
+            photoUrlsRef.current = { ...photoUrlsRef.current, [item.id]: photoProxyUrl(item.photo_key) };
+            urlChanged = true;
           }
-        });
+        }
+        if (urlChanged) setPhotoUrls(photoUrlsRef.current);
       }
     } catch {
       // 静默失败

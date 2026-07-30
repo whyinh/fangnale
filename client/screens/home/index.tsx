@@ -1,4 +1,5 @@
 import { authFetch } from '@/utils/api';
+import { photoProxyUrl } from '@/utils/photo';
 import { useAuth } from '@/contexts/AuthContext';
 import { contactLabel, contactAvatarText } from '@/utils/format';
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
@@ -76,6 +77,103 @@ interface LocationGroup {
 }
 
 type ViewMode = 'all' | 'byLocation';
+
+// 列表物品卡片（顶层 memo 组件：仅当关键字段变化时才重渲染，滚动零重绘）
+interface ItemCardProps {
+  item: Item;
+  photoUrl?: string;
+  isSelected: boolean;
+  selectionMode: boolean;
+  myEmail?: string | null;
+  onPress: (id: number) => void;
+  onLongPress: (id: number) => void;
+}
+
+const ItemCard = React.memo(function ItemCard({
+  item,
+  photoUrl,
+  isSelected,
+  selectionMode,
+  myEmail,
+  onPress,
+  onLongPress,
+}: ItemCardProps) {
+  return (
+    <TouchableOpacity
+      style={[styles.itemCard, selectionMode && isSelected && styles.itemCardSelected]}
+      onPress={() => onPress(item.id)}
+      onLongPress={() => onLongPress(item.id)}
+      delayLongPress={350}
+      activeOpacity={0.7}
+    >
+      {selectionMode && (
+        <View style={[styles.selectCircle, isSelected && styles.selectCircleActive]}>
+          {isSelected && <FontAwesome6 name="check" size={11} color="#FFF" />}
+        </View>
+      )}
+      {photoUrl ? (
+        <Image
+          source={{ uri: photoUrl }}
+          style={styles.itemImage}
+          contentFit="cover"
+          transition={180}
+          recyclingKey={String(item.id)}
+          cachePolicy="memory-disk"
+        />
+      ) : (
+        <View style={styles.imagePlaceholder}>
+          <FontAwesome6 name="image" size={24} color="#B2BEC3" />
+        </View>
+      )}
+      {item.borrowed_to ? (
+        <View style={styles.borrowedBadge}>
+          <FontAwesome6 name="hand-holding" size={9} color="#FFF" />
+          <Text style={styles.borrowedBadgeText}>借出</Text>
+        </View>
+      ) : null}
+      <View style={styles.itemInfo}>
+        <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
+        {(item.location_path || item.location) ? (
+          <View style={styles.locationRow}>
+            <FontAwesome6 name="map-pin" size={11} color="#636E72" />
+            <Text style={styles.itemLocation} numberOfLines={1}>{item.location_path || item.location}</Text>
+          </View>
+        ) : null}
+        {(item.owner_name || item.owner_email) && item.owner_email !== myEmail ? (
+          <View style={styles.locationRow}>
+            <FontAwesome6 name="user" size={10} color="#6C63FF" />
+            <Text style={styles.ownerText} numberOfLines={1}>
+              {item.owner_name || contactLabel(item.owner_email)} 记的
+            </Text>
+          </View>
+        ) : null}
+        {item.tags ? (
+          <View style={styles.tagsRow}>
+            {item.tags.split(',').slice(0, 3).map((tag, idx) => (
+              <View key={idx} style={[styles.tag, { backgroundColor: `${item.categories?.color || '#6C63FF'}18` }]}>
+                <Text style={[styles.tagText, { color: item.categories?.color || '#6C63FF' }]}>{tag.trim()}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    </TouchableOpacity>
+  );
+}, (prev, next) =>
+  prev.item.id === next.item.id &&
+  prev.item.name === next.item.name &&
+  prev.item.location === next.item.location &&
+  prev.item.location_path === next.item.location_path &&
+  prev.item.tags === next.item.tags &&
+  prev.item.owner_email === next.item.owner_email &&
+  prev.item.owner_name === next.item.owner_name &&
+  prev.item.borrowed_to === next.item.borrowed_to &&
+  prev.item.categories?.color === next.item.categories?.color &&
+  prev.photoUrl === next.photoUrl &&
+  prev.isSelected === next.isSelected &&
+  prev.selectionMode === next.selectionMode &&
+  prev.myEmail === next.myEmail
+);
 
 // 位置分组内的小卡片（顶层组件，避免 Hooks 陷阱）
 function GroupItemCard({
@@ -167,27 +265,12 @@ export default function HomeScreen() {
   }, []);
 
   const fetchItems = useCallback(async () => {
-    // 拉取物品照片的签名 URL
+    // 同步构造照片代理 URL（零网络请求，URL 稳定保证 expo-image 缓存命中）
     const fetchPhotoUrls = async (list: Item[]) => {
       const urlMap: Record<number, string> = {};
       for (const item of list) {
         if (item.photo_key && !photoUrlsRef.current[item.id]) {
-          try {
-            /**
-             * 服务端文件：server/src/routes/upload.ts
-             * 接口：POST /api/v1/upload/photo-url
-             * Body 参数：key: string
-             */
-            const photoRes = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/upload/photo-url`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ key: item.photo_key }),
-            });
-            const photoData = await photoRes.json();
-            urlMap[item.id] = photoData.url;
-          } catch {
-            // skip
-          }
+          urlMap[item.id] = photoProxyUrl(item.photo_key);
         }
       }
       if (Object.keys(urlMap).length > 0) {
@@ -474,72 +557,36 @@ export default function HomeScreen() {
     ]);
   }, [selectedIds.size, runBatch]);
 
-  const renderItem = ({ item }: { item: Item }) => {
-    const isSelected = selectedIds.has(item.id);
-    return (
-    <TouchableOpacity
-      style={[styles.itemCard, selectionMode && isSelected && styles.itemCardSelected]}
-      onPress={() => (selectionMode ? toggleSelect(item.id) : router.push(`/item-detail`, { id: item.id }))}
-      onLongPress={() => {
-        if (!selectionMode && viewMode === 'all') enterSelection(item.id);
-      }}
-      delayLongPress={350}
-      activeOpacity={0.7}
-    >
-      {selectionMode && (
-        <View style={[styles.selectCircle, isSelected && styles.selectCircleActive]}>
-          {isSelected && <FontAwesome6 name="check" size={11} color="#FFF" />}
-        </View>
-      )}
-      {photoUrls[item.id] ? (
-        <Image
-          source={{ uri: photoUrls[item.id] }}
-          style={styles.itemImage}
-          contentFit="cover"
-          transition={180}
-          recyclingKey={String(item.id)}
-          cachePolicy="memory-disk"
-        />
-      ) : (
-        <View style={styles.imagePlaceholder}>
-          <FontAwesome6 name="image" size={24} color="#B2BEC3" />
-        </View>
-      )}
-      {item.borrowed_to ? (
-        <View style={styles.borrowedBadge}>
-          <FontAwesome6 name="hand-holding" size={9} color="#FFF" />
-          <Text style={styles.borrowedBadgeText}>借出</Text>
-        </View>
-      ) : null}
-      <View style={styles.itemInfo}>
-        <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-        {(item.location_path || item.location) ? (
-          <View style={styles.locationRow}>
-            <FontAwesome6 name="map-pin" size={11} color="#636E72" />
-            <Text style={styles.itemLocation} numberOfLines={1}>{item.location_path || item.location}</Text>
-          </View>
-        ) : null}
-        {(item.owner_name || item.owner_email) && item.owner_email !== myEmail ? (
-          <View style={styles.locationRow}>
-            <FontAwesome6 name="user" size={10} color="#6C63FF" />
-            <Text style={styles.ownerText} numberOfLines={1}>
-              {item.owner_name || contactLabel(item.owner_email)} 记的
-            </Text>
-          </View>
-        ) : null}
-        {item.tags ? (
-          <View style={styles.tagsRow}>
-            {item.tags.split(',').slice(0, 3).map((tag, idx) => (
-              <View key={idx} style={[styles.tag, { backgroundColor: `${item.categories?.color || '#6C63FF'}18` }]}>
-                <Text style={[styles.tagText, { color: item.categories?.color || '#6C63FF' }]}>{tag.trim()}</Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
-      </View>
-    </TouchableOpacity>
-    );
-  };
+  // 稳定回调：配合 ItemCard 的 memo，滚动时不产生新引用
+  const handlePressItem = useCallback(
+    (id: number) => {
+      if (selectionMode) toggleSelect(id);
+      else router.push(`/item-detail`, { id });
+    },
+    [selectionMode, toggleSelect, router]
+  );
+
+  const handleLongPressItem = useCallback(
+    (id: number) => {
+      if (!selectionMode && viewMode === 'all') enterSelection(id);
+    },
+    [selectionMode, viewMode, enterSelection]
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: Item }) => (
+      <ItemCard
+        item={item}
+        photoUrl={photoUrls[item.id]}
+        isSelected={selectedIds.has(item.id)}
+        selectionMode={selectionMode}
+        myEmail={myEmail}
+        onPress={handlePressItem}
+        onLongPress={handleLongPressItem}
+      />
+    ),
+    [photoUrls, selectedIds, selectionMode, myEmail, handlePressItem, handleLongPressItem]
+  );
 
   const renderLocationGroup = ({ item: group }: { item: LocationGroup }) => (
     <View style={styles.groupSection}>

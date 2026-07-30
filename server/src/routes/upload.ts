@@ -5,20 +5,47 @@ import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 
-// 上传接口均需登录
-router.use(requireAuth);
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
-});
-
 const storage = new S3Storage({
   endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
   accessKey: "",
   secretKey: "",
   bucketName: process.env.COZE_BUCKET_NAME,
   region: "cn-beijing",
+});
+
+// GET /api/v1/upload/photo?key=xxx - 图片代理（302 重定向到签名 URL）
+// 免登录：key 为不可枚举的随机路径，与签名 URL 的公开可访问性质一致
+// 前端使用此稳定 URL 作为图片 uri，expo-image 磁盘缓存可永久生效
+// 注意：必须在 router.use(requireAuth) 之前注册
+router.get("/photo", async (req, res) => {
+  const key = req.query.key as string | undefined;
+  if (!key || typeof key !== "string") {
+    res.status(400).json({ error: "缺少 key 参数" });
+    return;
+  }
+  // 防路径穿越/任意 key 探测：仅允许 items/ 前缀
+  if (!key.startsWith("items/") || key.includes("..")) {
+    res.status(403).json({ error: "非法的 key" });
+    return;
+  }
+  try {
+    const signedUrl = await storage.generatePresignedUrl({
+      key,
+      expireTime: 86400 * 30,
+    });
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.redirect(302, signedUrl);
+  } catch (e) {
+    res.status(404).json({ error: "图片不存在" });
+  }
+});
+
+// 除图片代理外，其余上传接口均需登录
+router.use(requireAuth);
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
 });
 
 // POST /api/v1/upload/photo - 上传物品照片
