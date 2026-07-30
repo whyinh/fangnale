@@ -202,7 +202,7 @@ ${itemLines.join("\n")}
         },
         { role: "user", content: `共 ${items.length} 件物品、${(cats || []).length} 个分类，请给出整理建议。` },
       ],
-      { model: "doubao-seed-1-8-251228", temperature: 0.2 }
+      { temperature: 0.2 }
     );
 
     // 解析 + 严格清洗（防 LLM 幻觉 ID）
@@ -473,7 +473,7 @@ router.post("/recognize", upload.single("photo"), async (req, res) => {
             ],
           },
         ],
-        { model: "doubao-seed-1-8-251228", temperature: 0.3 }
+        { temperature: 0.3 }
       );
 
       const parsed = extractJson(response.content);
@@ -585,7 +585,7 @@ router.post("/recognize-multi", upload.single("photo"), async (req, res) => {
             ],
           },
         ],
-        { model: "doubao-seed-1-8-251228", temperature: 0.3 }
+        { temperature: 0.3 }
       );
 
       const parsed = extractJson(response.content);
@@ -695,7 +695,7 @@ ${JSON.stringify(inventory)}
         { role: "system", content: systemPrompt },
         { role: "user", content: question.trim().slice(0, 200) },
       ],
-      { model: "doubao-seed-1-8-251228", temperature: 0.3 }
+      { temperature: 0.3 }
     );
 
     for await (const chunk of stream) {
@@ -759,7 +759,7 @@ ${JSON.stringify(inventory)}
         },
         { role: "user", content: query.trim().slice(0, 100) },
       ],
-      { model: "doubao-seed-1-8-251228", temperature: 0.1 }
+      { temperature: 0.1 }
     );
 
     let ids: number[] = [];
