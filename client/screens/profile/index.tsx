@@ -24,6 +24,7 @@ import {
 } from 'react-native';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import { useSafeRouter } from '@/hooks/useSafeRouter';
 import * as Clipboard from 'expo-clipboard';
 import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
@@ -51,6 +52,7 @@ interface Family {
 
 export default function ProfileScreen() {
   const { user, signOut, updateProfile } = useAuth();
+  const router = useSafeRouter();
   const [nameModalVisible, setNameModalVisible] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [savingName, setSavingName] = useState(false);
@@ -408,13 +410,22 @@ export default function ProfileScreen() {
           )}
         </View>
 
+        {/* 新手引导（重看教程） */}
+        <TouchableOpacity style={styles.guideRow} onPress={() => router.push('/onboarding')}>
+          <View style={styles.guideIconWrap}>
+            <FontAwesome6 name="graduation-cap" size={15} color="#6C63FF" />
+          </View>
+          <Text style={styles.guideRowText}>新手引导</Text>
+          <FontAwesome6 name="chevron-right" size={12} color="#B9B5E8" />
+        </TouchableOpacity>
+
         {/* 退出登录 */}
         <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
           <FontAwesome6 name="right-from-bracket" size={15} color="#E24A4A" />
           <Text style={styles.signOutText}>退出登录</Text>
         </TouchableOpacity>
 
-        <Text style={styles.versionText}>放哪了 v1.0.0</Text>
+        <Text style={styles.versionText}>放哪了 v1.1.0</Text>
       </ScrollView>
 
       {/* 修改昵称弹窗 */}
@@ -699,6 +710,30 @@ const styles = StyleSheet.create({
   dividerText: {
     fontSize: 12,
     color: '#9EA0A5',
+  },
+  guideRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    gap: 10,
+  },
+  guideIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#F0EFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guideRowText: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1F2024',
+    fontWeight: '600',
   },
   signOutBtn: {
     flexDirection: 'row',
