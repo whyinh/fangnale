@@ -37,7 +37,5 @@ services:
         value: cn-beijing
       - key: TOS_ENDPOINT
         value: https://tos-s3-cn-beijing.volces.com
-      - key: VOLC_SPEECH_APPID
-        sync: false
-      - key: VOLC_SPEECH_ACCESS_TOKEN
-        sync: false
+      - key: VOLC_SPEECH_API_KEY
+        sync: false   # 豆包语音新版控制台「API Key 管理」中的 Key

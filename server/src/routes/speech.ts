@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import multer from "multer";
 import { llmInvoke } from "../services/llm.js";
-import { asrRecognize, ttsSynthesize } from "../services/speech.js";
+import { asrRecognize, ttsSynthesize, detectAudioFormat } from "../services/speech.js";
 import { getSupabaseClient } from "../storage/database/supabase-client";
 import { requireAuth, getVisibleOwnerIds } from "../middleware/auth.js";
 import { resolveCategoryId, type CategoryBrief } from "../utils/auto-category.js";
@@ -16,8 +16,6 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 },
 });
-
-const LLM_MODEL = "doubao-seed-1-8-251228";
 
 function extractJson(text: string): Record<string, unknown> {
   const match = text.match(/\{[\s\S]*\}/);
@@ -41,6 +39,7 @@ router.post("/voice-note", upload.single("audio"), async (req: Request, res: Res
     const asrResult = await asrRecognize({
       uid: "voice-note",
       base64Data: req.file.buffer.toString("base64"),
+      format: detectAudioFormat(req.file.originalname, req.file.mimetype),
     });
     const transcript = (asrResult.text || "").trim();
     if (!transcript) {
@@ -68,7 +67,6 @@ router.post("/voice-note", upload.single("audio"), async (req: Request, res: Res
 用户原话：${transcript}`;
 
     const response = await llmInvoke([{ role: "user", content: prompt }], {
-      model: LLM_MODEL,
       temperature: 0.2,
     });
 
@@ -126,6 +124,7 @@ router.post("/transcribe", upload.single("audio"), async (req: Request, res: Res
     const asrResult = await asrRecognize({
       uid: "voice-ask",
       base64Data: req.file.buffer.toString("base64"),
+      format: detectAudioFormat(req.file.originalname, req.file.mimetype),
     });
     const transcript = (asrResult.text || "").trim();
     if (!transcript) {
