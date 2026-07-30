@@ -94,6 +94,8 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
   const [multiItems, setMultiItems] = useState<MultiItemRow[]>([]);
   const [multiStatus, setMultiStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
   const multiStartedFor = useRef<string | null>(null);
+  // 「再来一件」防连点标记：新照片进入时（useEffect 重置）才会清零
+  const retakeFiredRef = useRef(false);
   // 跟踪"当前照片"：连拍时旧照片的识别/上传响应晚到，必须丢弃，防止污染新照片数据
   const photoUriRef = useRef(photoUri);
   photoUriRef.current = photoUri;
@@ -120,6 +122,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
     setMode('single');
     setMultiItems([]);
     setMultiStatus('idle');
+    retakeFiredRef.current = false;
 
     // 后台并行：照片上传 + AI 识别（用户选位置的同时 AI 已填好名称/标签/分类）
     if (recognizeStartedFor.current !== photoUri) {
@@ -483,6 +486,9 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
 
   // 连拍：再来一件（父组件重新调相机，拍完后以新 photoUri 重开本弹窗）
   const handleRetake = () => {
+    // 防连点：一次 retake 流程未结束时忽略后续点击，避免多个相机调用排队、弹窗反复弹出
+    if (retakeFiredRef.current) return;
+    retakeFiredRef.current = true;
     if (onRetake) onRetake();
   };
 
@@ -688,7 +694,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
                 placeholderTextColor="#B2BEC3"
                 value={location}
                 onChangeText={setLocation}
-                autoFocus={Platform.OS !== 'web'}
+                autoFocus={false}
               />
             </View>
 

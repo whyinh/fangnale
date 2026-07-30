@@ -204,9 +204,15 @@ export default function SpaceFurnitureScreen() {
 
   const activeLayerInfo = activeLayer !== null ? layers.find((l) => l.id === activeLayer) : null;
 
+  // 相机并发守卫：连点"再来一件"会导致多个相机调用排队，弹窗反复弹出
+  const capturingRef = useRef(false);
+  const retakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // 拍照放入当前隔层：拍照后打开极简保存（预设空间挂载）
   const handleCaptureToLayer = async () => {
     if (activeLayer === null || !activeLayerInfo) return;
+    if (capturingRef.current) return;
+    capturingRef.current = true;
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
@@ -222,14 +228,19 @@ export default function SpaceFurnitureScreen() {
       // iOS 上相机异常（如临时文件读取失败）时静默降级，避免 unhandled rejection
       console.error('Camera failed:', e);
       Toast.show({ type: 'error', text1: '相机打开失败', text2: '请重试一次' });
+    } finally {
+      capturingRef.current = false;
     }
   };
 
   // 连拍"再来一件"：iOS 上 Modal 显示中直接开相机会导致照片读取失败、
   // 相机关闭后 Modal 被系统重新 present（弹窗反复弹出）。先关弹窗再拉起相机。
   const handleRetakeToLayer = () => {
+    if (capturingRef.current) return;
     setQuickVisible(false);
-    setTimeout(() => {
+    if (retakeTimerRef.current) clearTimeout(retakeTimerRef.current);
+    retakeTimerRef.current = setTimeout(() => {
+      retakeTimerRef.current = null;
       void handleCaptureToLayer();
     }, 450);
   };
