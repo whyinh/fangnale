@@ -62,7 +62,7 @@ export default function OnboardingScreen() {
   const router = useSafeRouter();
   const { isAuthenticated } = useAuth();
   const [activeIndex, setActiveIndex] = useState(0);
-  const scrollX = useRef(new Animated.Value(0)).current;
+  const [scrollX] = useState(() => new Animated.Value(0));
   const listRef = useRef<FlatList<SlideDef>>(null);
   const isLast = activeIndex === SLIDES.length - 1;
 
@@ -142,8 +142,8 @@ function Slide({
   isActive: boolean;
 }) {
   // 对话演示：切到本屏时逐条出现（问句 → 停顿 → AI 回答），离开重置以便重播
-  const userAnim = useRef(new Animated.Value(0)).current;
-  const aiAnim = useRef(new Animated.Value(0)).current;
+  const [userAnim] = useState(() => new Animated.Value(0));
+  const [aiAnim] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     if (item.kind !== 'chat') return;

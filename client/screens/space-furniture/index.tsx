@@ -89,6 +89,9 @@ export default function SpaceFurnitureScreen() {
   const [layers, setLayers] = useState<LayerInfo[]>([]);
   const [items, setItems] = useState<SpaceItem[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
+  // photoUrls 最新值镜像：fetchData 的 useCallback 闭包捕获的是定义时的旧 state（初始为空），
+  // 导致"已有 URL 跳过"失效、每次刷新都重复请求签名 URL。闭包内必须读 ref。
+  const photoUrlsRef = useRef<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [activeLayer, setActiveLayer] = useState<number | null>(hlLayer);
   const [addVisible, setAddVisible] = useState(false);
@@ -136,7 +139,7 @@ export default function SpaceFurnitureScreen() {
 
         // 异步补齐照片签名 URL
         (data.items || []).forEach(async (item: SpaceItem) => {
-          if (item.photo_key && !photoUrls[item.id]) {
+          if (item.photo_key && !photoUrlsRef.current[item.id]) {
             try {
               /**
                * 服务端文件：server/src/routes/upload.ts
@@ -150,7 +153,10 @@ export default function SpaceFurnitureScreen() {
               });
               if (photoRes.ok) {
                 const { url } = await photoRes.json();
-                setPhotoUrls((prev) => (prev[item.id] ? prev : { ...prev, [item.id]: url }));
+                if (!photoUrlsRef.current[item.id]) {
+                  photoUrlsRef.current = { ...photoUrlsRef.current, [item.id]: url };
+                  setPhotoUrls(photoUrlsRef.current);
+                }
               }
             } catch {
               // 单张失败忽略

@@ -140,6 +140,10 @@ export default function HomeScreen() {
   const [smartMatched, setSmartMatched] = useState(false);
   const [loading, setLoading] = useState(true);
   const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
+  // photoUrls 最新值镜像：fetchItems 的 useCallback 闭包会捕获旧的 photoUrls state（初始为空），
+  // 导致"已有 URL 跳过"判断永远失效、每次刷新都全量重换签名 URL（20+ 次请求、图片全部重载闪动）。
+  // 闭包内必须读 ref 才能拿到真值。
+  const photoUrlsRef = useRef<Record<number, string>>({});
   const [viewMode, setViewMode] = useState<ViewMode>('all');
   const [quickSaveUri, setQuickSaveUri] = useState<string | null>(null);
   const [quickSaveVisible, setQuickSaveVisible] = useState(false);
@@ -167,7 +171,7 @@ export default function HomeScreen() {
     const fetchPhotoUrls = async (list: Item[]) => {
       const urlMap: Record<number, string> = {};
       for (const item of list) {
-        if (item.photo_key && !photoUrls[item.id]) {
+        if (item.photo_key && !photoUrlsRef.current[item.id]) {
           try {
             /**
              * 服务端文件：server/src/routes/upload.ts
@@ -187,7 +191,9 @@ export default function HomeScreen() {
         }
       }
       if (Object.keys(urlMap).length > 0) {
-        setPhotoUrls(prev => ({ ...prev, ...urlMap }));
+        const merged = { ...photoUrlsRef.current, ...urlMap };
+        photoUrlsRef.current = merged;
+        setPhotoUrls(merged);
       }
     };
 
@@ -375,12 +381,16 @@ export default function HomeScreen() {
   useEffect(() => {
     AsyncStorage.getItem('activation_celebrated_v1')
       .then((v) => setActivationCelebrated(v === '1'))
-      .catch(() => {});
+      .catch(() => {
+        // 读取失败按未庆祝处理，不阻塞使用
+      });
   }, []);
 
   const handleDismissCelebration = () => {
     setActivationCelebrated(true);
-    void AsyncStorage.setItem('activation_celebrated_v1', '1').catch(() => {});
+    void AsyncStorage.setItem('activation_celebrated_v1', '1').catch(() => {
+      // 本地标记写入失败忽略
+    });
   };
 
   // 进度条平滑动画：件数变化时过渡到新进度（width 动画需关闭 native driver）

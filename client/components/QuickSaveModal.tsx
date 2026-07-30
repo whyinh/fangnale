@@ -7,12 +7,12 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Modal,
   ScrollView,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Animated,
+  BackHandler,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
@@ -88,7 +88,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
   const [rapidFire, setRapidFire] = useState(false);
   const [comboCount, setComboCount] = useState(0);
   const [savedInfo, setSavedInfo] = useState<{ title: string; desc: string } | null>(null);
-  const successScale = useRef(new Animated.Value(0)).current;
+  const [successScale] = useState(() => new Animated.Value(0));
   // 一拍多录
   const [mode, setMode] = useState<CaptureMode>('single');
   const [multiItems, setMultiItems] = useState<MultiItemRow[]>([]);
@@ -99,6 +99,42 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
   // 跟踪"当前照片"：连拍时旧照片的识别/上传响应晚到，必须丢弃，防止污染新照片数据
   const photoUriRef = useRef(photoUri);
   photoUriRef.current = photoUri;
+
+  // ── 覆盖层自绘弹窗（不用 RN Modal）────────────────────────────
+  // 为什么不用 <Modal>：iOS 上 Modal 的 present 由原生层管理，当 Modal 内容高度突变
+  // （保存成功切成功页）或下方页面布局剧变（onSaved 刷新列表）时，原生会把 Modal
+  // 重新 present，导致整个子树被重建（state/ref 全丢、useEffect 重跑、动画重播），
+  // 表现为"弹窗反复弹出好几下"。自绘覆盖层是纯 React 视图，无原生 present 过程，彻底免疫。
+  const [render, setRender] = useState(visible);
+  const [slideAnim] = useState(() => new Animated.Value(700));
+  const [fadeAnim] = useState(() => new Animated.Value(0));
+
+  useEffect(() => {
+    if (visible) {
+      slideAnim.setValue(700);
+      fadeAnim.setValue(0);
+      setRender(true);
+      Animated.parallel([
+        Animated.timing(slideAnim, { toValue: 0, duration: 280, useNativeDriver: true }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, { toValue: 700, duration: 220, useNativeDriver: true }),
+        Animated.timing(fadeAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
+      ]).start(() => setRender(false));
+    }
+  }, [visible, slideAnim, fadeAnim]);
+
+  // Android 返回键关闭（原 Modal 的 onRequestClose 能力）
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'android') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
 
   // Modal 打开时：重置状态 + 后台 AI 识别（含上传）+ 拉取分类和常用位置
   // 连拍模式（rapidFire）：保留上一件的位置/空间，用户只需按快门
@@ -248,7 +284,9 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
       const data = await res.json();
       const list = (Array.isArray(data) ? data : []) as Category[];
       await applyCategories(list);
-      AsyncStorage.setItem(CATEGORIES_CACHE_KEY, JSON.stringify(list)).catch(() => {});
+      AsyncStorage.setItem(CATEGORIES_CACHE_KEY, JSON.stringify(list)).catch(() => {
+        // 缓存写入失败忽略，下次启动会重新拉取
+      });
     } catch (e) {
       console.error('Failed to fetch categories:', e);
     }
@@ -274,7 +312,9 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
       const data = await res.json();
       const list = (Array.isArray(data) ? data : []) as FrequentLocation[];
       setFrequentLocations(list);
-      AsyncStorage.setItem(LOCATIONS_CACHE_KEY, JSON.stringify(list)).catch(() => {});
+      AsyncStorage.setItem(LOCATIONS_CACHE_KEY, JSON.stringify(list)).catch(() => {
+        // 缓存写入失败忽略，下次启动会重新拉取
+      });
     } catch (e) {
       console.error('Failed to fetch locations:', e);
     }
@@ -503,14 +543,18 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
   const multiCheckedCount = multiItems.filter((it) => it.checked).length;
   const multiSaveDisabled = saving || multiStatus === 'recognizing' || !photoKey || multiCheckedCount === 0;
 
+  if (!render) return null;
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <View style={styles.overlay}>
+      <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
+      </Animated.View>
       <KeyboardAvoidingView
-        style={styles.overlay}
+        style={styles.kavWrap}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        pointerEvents="box-none"
       >
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
-        <View style={styles.sheet}>
+        <Animated.View style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}>
           {/* 顶部：照片 + 标题 */}
           <View style={styles.headerRow}>
             <View>
@@ -810,19 +854,25 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
           </TouchableOpacity>
           </>
           )}
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
       <LocationPicker
         visible={pickerVisible}
         onClose={() => setPickerVisible(false)}
         onSelect={(sel) => setSpaceSel(sel)}
       />
-    </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   overlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+    zIndex: 990,
+    elevation: 24,
+  },
+  kavWrap: {
     flex: 1,
     justifyContent: 'flex-end',
   },
