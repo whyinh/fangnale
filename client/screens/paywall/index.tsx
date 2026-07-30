@@ -51,7 +51,11 @@ export default function PaywallScreen() {
       // 支付渠道可插拔（utils/purchase.ts）：当前为开发模式，正式版切换为 Apple IAP
       await purchasePlan(selected);
       await refresh();
-      Toast.show({ type: 'success', text1: '会员已开通', text2: '全部功能已解锁' });
+      if (isPremium) {
+        Toast.show({ type: 'success', text1: '套餐已变更', text2: '新套餐已生效' });
+      } else {
+        Toast.show({ type: 'success', text1: '会员已开通', text2: '全部功能已解锁' });
+      }
       router.back();
     } catch (e) {
       Alert.alert('开通失败', e instanceof Error ? e.message : '请稍后重试');
@@ -82,6 +86,99 @@ export default function PaywallScreen() {
     void Linking.openURL(`${API_BASE}/terms`);
   };
 
+  const isLifetime = isPremium && plan === 'lifetime';
+  // 已会员时当前套餐不可重复购买；若选中项恰为当前套餐，回退到推荐变更目标
+  const effectiveSelected: PlanId =
+    isPremium && selected === plan ? (plan === 'yearly' ? 'lifetime' : 'yearly') : selected;
+
+  const planLabel = plan === 'lifetime' ? '终身会员' : plan === 'yearly' ? '年度会员' : '月度会员';
+
+  /** 套餐列表（免费版=选择开通，会员=变更套餐，当前套餐禁用） */
+  const plansSection = (
+    <View style={styles.planWrap}>
+      {(Object.keys(PLANS) as PlanId[]).map((id) => {
+        const p = PLANS[id];
+        const isCurrent = isPremium && plan === id;
+        const active = effectiveSelected === id;
+        return (
+          <TouchableOpacity
+            key={id}
+            style={[styles.planCard, active && styles.planCardActive, isCurrent && styles.planCardDisabled]}
+            onPress={() => !isCurrent && setSelected(id)}
+            disabled={isCurrent}
+            activeOpacity={0.8}
+          >
+            {isCurrent ? (
+              <View style={[styles.planBadge, styles.planBadgeCurrent]}>
+                <Text style={styles.planBadgeText}>当前套餐</Text>
+              </View>
+            ) : p.badge ? (
+              <View style={[styles.planBadge, id === 'lifetime' && styles.planBadgeGold]}>
+                <Text style={styles.planBadgeText}>{p.badge}</Text>
+              </View>
+            ) : null}
+            <View style={[styles.radio, active && styles.radioActive]}>
+              {active && <View style={styles.radioDot} />}
+            </View>
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <Text style={styles.planTitle}>{p.title}</Text>
+              <Text style={styles.planDesc}>{p.desc}</Text>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              {p.originalPrice ? <Text style={styles.planOriginalPrice}>{p.originalPrice}</Text> : null}
+              <Text style={styles.planPrice}>
+                {p.price}
+                <Text style={styles.planUnit}>{p.unit}</Text>
+              </Text>
+            </View>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+
+  const ctaText = isPremium
+    ? effectiveSelected === 'lifetime'
+      ? `${PLANS.lifetime.price} 升级为终身买断`
+      : `${PLANS[effectiveSelected].price} 变更为${PLANS[effectiveSelected].title}`
+    : effectiveSelected === 'lifetime'
+      ? '¥168 买断终身会员'
+      : `${PLANS[effectiveSelected].price} 开通${PLANS[effectiveSelected].title}`;
+
+  /** 订阅/变更按钮 */
+  const ctaSection = (
+    <TouchableOpacity
+      style={[styles.subscribeBtn, submitting && { opacity: 0.6 }]}
+      onPress={handleSubscribe}
+      disabled={submitting}
+      activeOpacity={0.85}
+    >
+      {submitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.subscribeText}>{ctaText}</Text>}
+    </TouchableOpacity>
+  );
+
+  /** 恢复购买 + 订阅条款 + 链接（审核要求，开通与变更场景均需展示） */
+  const footerSection = (
+    <>
+      <TouchableOpacity style={styles.restoreBtn} onPress={handleRestore} disabled={restoring}>
+        <Text style={styles.restoreText}>{restoring ? '正在恢复…' : '恢复购买'}</Text>
+      </TouchableOpacity>
+      <Text style={styles.termsText}>
+        连续包月/包年订阅将在每个周期结束前 24 小时内自动扣费续期。可随时前往 iPhone「设置 → Apple ID →
+        订阅」取消，取消后当期会员权益保持至周期结束，不再续费。终身买断为一次性购买，永久有效。
+      </Text>
+      <View style={styles.linkRow}>
+        <TouchableOpacity onPress={openPrivacy}>
+          <Text style={styles.linkText}>隐私政策</Text>
+        </TouchableOpacity>
+        <Text style={styles.linkDivider}>·</Text>
+        <TouchableOpacity onPress={openTerms}>
+          <Text style={styles.linkText}>会员服务协议</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
   return (
     <Screen safeAreaEdges={['top', 'bottom']}>
       <View style={styles.container}>
@@ -108,17 +205,34 @@ export default function PaywallScreen() {
           </View>
 
           {isPremium ? (
-            /* 已是会员 */
-            <View style={styles.memberCard}>
-              <FontAwesome6 name="circle-check" size={22} color={ACCENT} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.memberTitle}>会员生效中</Text>
-                <Text style={styles.memberDesc}>
-                  {plan === 'yearly' ? '年度会员' : '月度会员'}
-                  {expiresAt ? ` · ${new Date(expiresAt).toLocaleDateString('zh-CN')} 到期` : ''}
-                </Text>
+            /* 已是会员：状态卡 + 变更套餐（终身会员无可变更项） */
+            <>
+              <View style={styles.memberCard}>
+                <FontAwesome6 name="circle-check" size={22} color={ACCENT} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.memberTitle}>会员生效中</Text>
+                  <Text style={styles.memberDesc}>
+                    {planLabel}
+                    {expiresAt
+                      ? ` · ${new Date(expiresAt).toLocaleDateString('zh-CN')} 到期`
+                      : isLifetime
+                        ? ' · 永久有效'
+                        : ''}
+                  </Text>
+                </View>
               </View>
-            </View>
+
+              {isLifetime ? (
+                <Text style={styles.lifetimeNote}>终身会员已买断全部权益，无需续费</Text>
+              ) : (
+                <>
+                  <Text style={styles.switchTitle}>变更套餐</Text>
+                  {plansSection}
+                  {ctaSection}
+                </>
+              )}
+              {footerSection}
+            </>
           ) : (
             <>
               {/* 权益对比 */}
@@ -145,80 +259,13 @@ export default function PaywallScreen() {
               </View>
 
               {/* 套餐选择 */}
-              <View style={styles.planWrap}>
-                {(Object.keys(PLANS) as PlanId[]).map((id) => {
-                  const p = PLANS[id];
-                  const active = selected === id;
-                  return (
-                    <TouchableOpacity
-                      key={id}
-                      style={[styles.planCard, active && styles.planCardActive]}
-                      onPress={() => setSelected(id)}
-                      activeOpacity={0.8}
-                    >
-                      {p.badge ? (
-                        <View style={[styles.planBadge, id === 'lifetime' && styles.planBadgeGold]}>
-                          <Text style={styles.planBadgeText}>{p.badge}</Text>
-                        </View>
-                      ) : null}
-                      <View style={[styles.radio, active && styles.radioActive]}>
-                        {active && <View style={styles.radioDot} />}
-                      </View>
-                      <View style={{ flex: 1, paddingRight: 8 }}>
-                        <Text style={styles.planTitle}>{p.title}</Text>
-                        <Text style={styles.planDesc}>{p.desc}</Text>
-                      </View>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        {p.originalPrice ? (
-                          <Text style={styles.planOriginalPrice}>{p.originalPrice}</Text>
-                        ) : null}
-                        <Text style={styles.planPrice}>
-                          {p.price}
-                          <Text style={styles.planUnit}>{p.unit}</Text>
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              {plansSection}
 
               {/* 订阅按钮 */}
-              <TouchableOpacity
-                style={[styles.subscribeBtn, submitting && { opacity: 0.6 }]}
-                onPress={handleSubscribe}
-                disabled={submitting}
-                activeOpacity={0.85}
-              >
-                {submitting ? (
-                  <ActivityIndicator color="#FFF" />
-                ) : (
-                  <Text style={styles.subscribeText}>
-                    {selected === 'lifetime'
-                      ? '¥168 买断终身会员'
-                      : `${PLANS[selected].price} 开通${PLANS[selected].title}`}
-                  </Text>
-                )}
-              </TouchableOpacity>
+              {ctaSection}
 
-              {/* 恢复购买（App Store 审核要求） */}
-              <TouchableOpacity style={styles.restoreBtn} onPress={handleRestore} disabled={restoring}>
-                <Text style={styles.restoreText}>{restoring ? '正在恢复…' : '恢复购买'}</Text>
-              </TouchableOpacity>
-
-              {/* 订阅条款（App Store 审核要求的自动续期说明） */}
-              <Text style={styles.termsText}>
-                连续包月/包年订阅将在每个周期结束前 24 小时内自动扣费续期。可随时前往 iPhone「设置 → Apple ID →
-                订阅」取消，取消后当期会员权益保持至周期结束，不再续费。终身买断为一次性购买，永久有效。
-              </Text>
-              <View style={styles.linkRow}>
-                <TouchableOpacity onPress={openPrivacy}>
-                  <Text style={styles.linkText}>隐私政策</Text>
-                </TouchableOpacity>
-                <Text style={styles.linkDivider}>·</Text>
-                <TouchableOpacity onPress={openTerms}>
-                  <Text style={styles.linkText}>会员服务协议</Text>
-                </TouchableOpacity>
-              </View>
+              {/* 恢复购买 + 订阅条款 */}
+              {footerSection}
             </>
           )}
         </ScrollView>
@@ -295,6 +342,10 @@ const styles = StyleSheet.create({
   planTitle: { fontSize: 15, fontWeight: '700', color: '#1A1A2E' },
   planDesc: { fontSize: 12, color: '#9C9CAE', marginTop: 2 },
   planBadgeGold: { backgroundColor: '#B8860B' },
+  planBadgeCurrent: { backgroundColor: '#9C9CAE' },
+  planCardDisabled: { opacity: 0.55 },
+  switchTitle: { fontSize: 15, fontWeight: '700', color: '#1A1A2E', marginTop: 22, marginBottom: 10, marginLeft: 4 },
+  lifetimeNote: { fontSize: 13, color: '#9C9CAE', textAlign: 'center', marginTop: 20, lineHeight: 19 },
   planOriginalPrice: { fontSize: 12, color: '#B2B0C8', textDecorationLine: 'line-through', marginBottom: 2 },
   planPrice: { fontSize: 20, fontWeight: '800', color: '#1A1A2E' },
   planUnit: { fontSize: 12, fontWeight: '500', color: '#9C9CAE' },

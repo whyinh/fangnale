@@ -72,6 +72,13 @@ router.post("/dev-activate", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "无效的套餐类型", code: "INVALID_PLAN" });
     }
     const plan = rawPlan === "lifetime" ? "lifetime" : rawPlan === "yearly" ? "yearly" : "monthly";
+
+    // 终身会员为最高级：已是终身则直接返回当前状态，禁止任何变更写入（防误操作降级丢失买断权益）
+    const current = await getActiveMembership(userId);
+    if (current?.plan === "lifetime") {
+      return res.json({ ok: true, plan: "lifetime", expiresAt: null, unchanged: true });
+    }
+
     // 终身会员无到期时间；月度 30 天，年度 365 天
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + (plan === "yearly" ? 365 : 30));

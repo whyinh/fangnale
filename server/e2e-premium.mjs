@@ -64,6 +64,16 @@ r = await fetch(`${BASE}/api/v1/premium/`, { headers: H });
 d = await r.json();
 check('lifetime 会员有效', d.isPremium === true && d.plan === 'lifetime');
 
+console.log('== 3.6 终身会员变更保护 ==');
+r = await fetch(`${BASE}/api/v1/premium/dev-activate`, {
+  method: 'POST', headers: H, body: JSON.stringify({ plan: 'monthly' }),
+});
+d = await r.json();
+check('终身用户变更请求被豁免（unchanged）', r.status === 200 && d.unchanged === true, JSON.stringify(d));
+r = await fetch(`${BASE}/api/v1/premium/`, { headers: H });
+d = await r.json();
+check('终身权益未被降级', d.isPremium === true && d.plan === 'lifetime', JSON.stringify(d));
+
 console.log('== 4. 开发模式关闭会员（回退免费态） ==');
 r = await fetch(`${BASE}/api/v1/premium/dev-deactivate`, { method: 'POST', headers: H });
 check('dev-deactivate 200', r.status === 200);
