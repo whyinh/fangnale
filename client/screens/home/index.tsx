@@ -20,6 +20,7 @@ import {
   Keyboard,
   Share,
   Animated,
+  RefreshControl,
 } from 'react-native';
 import { Image } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -30,6 +31,7 @@ import { useSafeRouter } from '@/hooks/useSafeRouter';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
 import { QuickSaveModal } from '@/components/QuickSaveModal';
 import AskModal from '@/components/AskModal';
 import VoicePanel from '@/components/VoicePanel';
@@ -175,6 +177,36 @@ const ItemCard = React.memo(function ItemCard({
   prev.myEmail === next.myEmail
 );
 
+// 首屏加载骨架屏：与物品卡片同形的灰色轮廓 + 呼吸脉冲，比转圈更显"快"
+function HomeSkeleton() {
+  const [pulse] = useState(() => new Animated.Value(0.45));
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 0.95, duration: 620, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.45, duration: 620, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
+  return (
+    <Animated.View style={[styles.skeletonWrap, { opacity: pulse }]}>
+      {[0, 1, 2, 3].map((i) => (
+        <View key={i} style={styles.skeletonCard}>
+          <View style={styles.skeletonImage} />
+          <View style={styles.skeletonInfo}>
+            <View style={styles.skeletonLine} />
+            <View style={[styles.skeletonLine, styles.skeletonLineShort]} />
+          </View>
+        </View>
+      ))}
+    </Animated.View>
+  );
+}
+
 // 位置分组内的小卡片（顶层组件，避免 Hooks 陷阱）
 function GroupItemCard({
   item,
@@ -237,6 +269,7 @@ export default function HomeScreen() {
   const [smartSearching, setSmartSearching] = useState(false);
   const [smartMatched, setSmartMatched] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
   // photoUrls 最新值镜像：fetchItems 的 useCallback 闭包会捕获旧的 photoUrls state（初始为空），
   // 导致"已有 URL 跳过"判断永远失效、每次刷新都全量重换签名 URL（20+ 次请求、图片全部重载闪动）。
@@ -258,7 +291,7 @@ export default function HomeScreen() {
        */
       const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
       const data = await res.json();
-      setCategories(data);
+      setCategories(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('Failed to fetch categories:', e);
     }
@@ -329,8 +362,10 @@ export default function HomeScreen() {
         return;
       }
 
-      setItems(data);
-      await fetchPhotoUrls(data);
+      // 契约防御：接口异常返回非数组时兜底空列表，避免渲染层迭代崩溃
+      const list = (Array.isArray(data) ? data : []) as Item[];
+      setItems(list);
+      await fetchPhotoUrls(list);
     } catch (e) {
       console.error('Failed to fetch items:', e);
     } finally {
@@ -344,6 +379,16 @@ export default function HomeScreen() {
       fetchItems();
     }, [fetchCategories, fetchItems])
   );
+
+  // 下拉刷新：列表保持显示（loading 分支只兜首次空数据骨架屏），指示器由 RefreshControl 呈现
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([fetchCategories(), fetchItems()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchCategories, fetchItems]);
 
   // 按位置分组
   const locationGroups = useMemo<LocationGroup[]>(() => {
@@ -406,6 +451,11 @@ export default function HomeScreen() {
   const handleQuickCapture = async () => {
     if (capturingRef.current) return;
     capturingRef.current = true;
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {
+      // Web 端忽略
+    }
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
@@ -493,6 +543,11 @@ export default function HomeScreen() {
   }, []);
 
   const enterSelection = useCallback((id: number) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {
+      // Web 端忽略
+    }
     setSelectionMode(true);
     setSelectedIds(new Set([id]));
   }, []);
@@ -828,13 +883,13 @@ export default function HomeScreen() {
         )}
 
         {/* 物品列表 / 位置分组 */}
-        {loading || smartSearching ? (
+        {smartSearching ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#6C63FF" />
-            {smartSearching && (
-              <Text style={styles.smartSearchText}>字面没匹配到，AI 正在帮你联想…</Text>
-            )}
+            <Text style={styles.smartSearchText}>字面没匹配到，AI 正在帮你联想…</Text>
           </View>
+        ) : loading && items.length === 0 ? (
+          <HomeSkeleton />
         ) : displayItems.length === 0 && showExpiringOnly ? (
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconWrap}>
@@ -882,6 +937,9 @@ export default function HomeScreen() {
             maxToRenderPerBatch={8}
             windowSize={7}
             updateCellsBatchingPeriod={40}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6C63FF" colors={['#6C63FF']} />
+            }
           />
         ) : (
           <FlatList
@@ -894,6 +952,9 @@ export default function HomeScreen() {
             maxToRenderPerBatch={6}
             windowSize={7}
             updateCellsBatchingPeriod={40}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6C63FF" colors={['#6C63FF']} />
+            }
           />
         )}
 
@@ -1421,6 +1482,38 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  skeletonWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+  },
+  skeletonCard: {
+    flexDirection: 'row',
+    backgroundColor: '#F0F0F3',
+    borderRadius: 24,
+    marginBottom: 16,
+    padding: 12,
+  },
+  skeletonImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 16,
+    backgroundColor: '#E3E3EA',
+  },
+  skeletonInfo: {
+    flex: 1,
+    marginLeft: 14,
+    justifyContent: 'center',
+    gap: 10,
+  },
+  skeletonLine: {
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#E3E3EA',
+    width: '72%',
+  },
+  skeletonLineShort: {
+    width: '45%',
   },
   smartSearchText: {
     marginTop: 12,

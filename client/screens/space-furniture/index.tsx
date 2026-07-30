@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
 import { Screen } from '@/components/Screen';
 import { QuickSaveModal } from '@/components/QuickSaveModal';
 import { useFocusEffect } from 'expo-router';
@@ -134,9 +135,10 @@ export default function SpaceFurnitureScreen() {
       const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/locations/${furnitureId}/items`);
       if (res.ok) {
         const data = await res.json();
-        setNode(data.node || null);
-        setLayers(data.layers || []);
-        setItems(data.items || []);
+        // 契约防御：字段异常时兜底，避免渲染层迭代崩溃
+        setNode(data.node && typeof data.node === 'object' ? data.node : null);
+        setLayers(Array.isArray(data.layers) ? data.layers : []);
+        setItems(Array.isArray(data.items) ? data.items : []);
 
         // 同步构造照片代理 URL（零网络请求，URL 稳定保证 expo-image 缓存命中）
         let urlChanged = false;
@@ -203,6 +205,11 @@ export default function SpaceFurnitureScreen() {
     if (activeLayer === null || !activeLayerInfo) return;
     if (capturingRef.current) return;
     capturingRef.current = true;
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {
+      // Web 端忽略
+    }
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {

@@ -271,7 +271,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
         const cached = await AsyncStorage.getItem(CATEGORIES_CACHE_KEY);
         if (cached) {
           const list = JSON.parse(cached) as Category[];
-          if (list.length > 0) await applyCategories(list);
+          if (Array.isArray(list) && list.length > 0) await applyCategories(list);
         }
       } catch { /* 缓存读取失败忽略 */ }
     }
@@ -299,7 +299,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
         const cached = await AsyncStorage.getItem(LOCATIONS_CACHE_KEY);
         if (cached) {
           const list = JSON.parse(cached) as FrequentLocation[];
-          if (list.length > 0) setFrequentLocations(list);
+          if (Array.isArray(list) && list.length > 0) setFrequentLocations(list);
         }
       } catch { /* 缓存读取失败忽略 */ }
     }
@@ -529,6 +529,11 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
     // 防连点：一次 retake 流程未结束时忽略后续点击，避免多个相机调用排队、弹窗反复弹出
     if (retakeFiredRef.current) return;
     retakeFiredRef.current = true;
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {
+      // Web 端忽略
+    }
     if (onRetake) onRetake();
   };
 

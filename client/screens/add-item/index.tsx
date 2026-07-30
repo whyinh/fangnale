@@ -50,7 +50,7 @@ export default function AddItemScreen() {
     try {
       const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/categories`);
       const data = await res.json();
-      setCategories(data);
+      setCategories(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('Failed to fetch categories:', e);
     } finally {
