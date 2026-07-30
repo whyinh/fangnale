@@ -24,7 +24,7 @@ const API_BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL || '';
 const BENEFITS: { icon: string; title: string; free: string; premium: string }[] = [
   { icon: 'box', title: '物品记录数量', free: '30 件', premium: '不限' },
   { icon: 'wand-magic-sparkles', title: 'AI 拍照识别', free: '支持', premium: '支持' },
-  { icon: 'layer-group', title: '一拍多录', free: '3 件/次', premium: '不限' },
+  { icon: 'layer-group', title: '一拍多录', free: '支持（计入总量）', premium: '不限数量' },
   { icon: 'comments', title: '问 AI 找东西', free: '3 次/天', premium: '不限' },
   { icon: 'cloud-arrow-up', title: '多设备同步', free: '支持', premium: '支持' },
 ];

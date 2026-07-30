@@ -39,6 +39,13 @@ for (let i = 0; i < 3; i++) {
   const rr = await fetch(`${BASE}/api/v1/premium/usage/ask`, { method: 'POST', headers: H });
   if (rr.status !== 200) { console.log('  (usage 记录接口不存在则跳过)'); break; }
 }
+// 配额满后调用 ask：应以 SSE 错误事件返回（HTTP 200 + error/code 字段），而非 403
+r = await fetch(`${BASE}/api/v1/items/ask`, {
+  method: 'POST', headers: H, body: JSON.stringify({ question: '钥匙在哪' }),
+});
+const askBody = await r.text();
+check('ask 配额满返回 SSE 错误事件', r.status === 200 && askBody.includes('ASK_LIMIT') && askBody.includes('error') && askBody.includes('[DONE]'),
+  `status=${r.status} body=${askBody.slice(0, 120)}`);
 
 console.log('== 3. 开发模式开通会员 ==');
 r = await fetch(`${BASE}/api/v1/premium/dev-activate`, {

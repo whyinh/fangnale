@@ -21,6 +21,8 @@ import EventSource from 'react-native-sse';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createFormDataFile } from '@/utils';
+import { useMembership } from '@/contexts/MembershipContext';
+import { useSafeRouter } from '@/hooks/useSafeRouter';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 
@@ -66,6 +68,8 @@ const webRecordingOptions = buildWebRecordingOptions();
 
 export default function VoicePanel({ visible, categories, onClose, onSaved }: VoicePanelProps) {
   const insets = useSafeAreaInsets();
+  const router = useSafeRouter();
+  const { isPremium, quota, incrementAskUsage } = useMembership();
   const [mode, setMode] = useState<Mode>('note');
   const [phase, setPhase] = useState<Phase>('idle');
   const [transcript, setTranscript] = useState('');
@@ -235,9 +239,26 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
   const handleMicPress = () => {
     if (phase === 'recording') {
       stopRecording();
-    } else if (phase === 'idle' || phase === 'result') {
-      startRecording();
+      return;
     }
+    if (phase !== 'idle' && phase !== 'result') return;
+    // 会员门控预检：问位置模式下，免费用户当日配额用完则拦截并引导升级
+    if (mode === 'ask') {
+      const asksLimit = quota?.asksDailyLimit ?? Number.POSITIVE_INFINITY;
+      const asksUsed = quota?.asksUsedToday ?? 0;
+      if (!isPremium && asksUsed >= asksLimit) {
+        Alert.alert(
+          '今日免费额度已用完',
+          `免费版每天可问 AI ${asksLimit} 次，升级会员不限次数`,
+          [
+            { text: '升级会员', onPress: () => { onClose(); router.push('/paywall', { reason: 'ask_limit' }); } },
+            { text: '明天再来', style: 'cancel' },
+          ]
+        );
+        return;
+      }
+    }
+    startRecording();
   };
 
   // ============ 音频处理 ============
@@ -340,6 +361,8 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
           return;
         }
         if (parsed.delta) {
+          // 首个 delta 说明后端已通过门控并计入配额，本地计数同步 +1
+          if (!fullAnswer) incrementAskUsage();
           fullAnswer += parsed.delta;
           setAskAnswer((prev) => prev + parsed.delta);
         }
@@ -428,7 +451,22 @@ export default function VoicePanel({ visible, categories, onClose, onSaved }: Vo
           tags: draftTags.join(','),
         }),
       });
-      if (!res.ok) throw new Error('保存失败');
+      if (!res.ok) {
+        // 会员门控：免费版物品数达上限，引导升级而非笼统报错
+        if (res.status === 403) {
+          let limitMsg = '免费版最多记录 30 件物品，升级会员不限数量';
+          try {
+            const b = await res.json();
+            if (b?.code === 'ITEM_LIMIT' && b?.error) limitMsg = b.error;
+          } catch { /* 忽略解析失败 */ }
+          Alert.alert('免费版已达上限', limitMsg, [
+            { text: '升级会员', onPress: () => { onClose(); router.push('/paywall', { reason: 'item_limit' }); } },
+            { text: '知道了', style: 'cancel' },
+          ]);
+          return;
+        }
+        throw new Error('保存失败');
+      }
       handleClose();
       onSaved();
     } catch (e) {

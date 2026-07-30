@@ -495,32 +495,33 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
     try {
       /**
        * 服务端文件：server/src/routes/items.ts
-       * 接口：POST /api/v1/items（逐件循环创建）
+       * 接口：POST /api/v1/items（逐件串行创建）
        * Body 参数：name: string, category_id: number | null, location: string, location_id: number | null, tags: string, photo_key: string, note: string
+       * 说明：必须串行——并发时各请求同时读到相同物品计数，会绕过免费版 30 件上限（竞态）
        */
-      await Promise.all(
-        chosen.map(async (it) => {
-          const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: it.name,
-              category_id: it.category_id,
-              location: location.trim(),
-              location_id: spaceSel?.location_id ?? null,
-              tags: '',
-              photo_key: photoKey,
-              note: '',
-            }),
-          });
-          if (res.ok) {
-            okCount += 1;
-          } else if (res.status === 403) {
-            // 会员门控：免费版物品数达上限
-            try { const b = await res.json(); if (b?.code === 'ITEM_LIMIT') hitLimit = true; } catch { /* 忽略解析失败 */ }
-          }
-        })
-      );
+      for (const it of chosen) {
+        // 已撞上限则停止后续请求，避免无效调用
+        if (hitLimit) break;
+        const res = await authFetch(`${EXPO_PUBLIC_BACKEND_BASE_URL}/api/v1/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: it.name,
+            category_id: it.category_id,
+            location: location.trim(),
+            location_id: spaceSel?.location_id ?? null,
+            tags: '',
+            photo_key: photoKey,
+            note: '',
+          }),
+        });
+        if (res.ok) {
+          okCount += 1;
+        } else if (res.status === 403) {
+          // 会员门控：免费版物品数达上限
+          try { const b = await res.json(); if (b?.code === 'ITEM_LIMIT') hitLimit = true; } catch { /* 忽略解析失败 */ }
+        }
+      }
       if (okCount === 0) {
         if (hitLimit) {
           onClose();

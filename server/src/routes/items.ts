@@ -646,26 +646,31 @@ router.post("/ask", async (req, res) => {
     return;
   }
 
-  // 会员门控（必须在 SSE 响应头设置之前完成，否则无法再返回错误状态码）
-  // 免费用户每日限问 FREE_ASK_DAILY_LIMIT 次；会员不限
+  // 会员门控：免费用户每日限问 FREE_ASK_DAILY_LIMIT 次；会员不限
+  // 注意：SSE 场景下 403 JSON 无法被 react-native-sse 读取 body（只会触发 error 事件），
+  // 因此建立 SSE 连接后以错误事件下发，前端统一在 message 处理中展示文案
   const premiumForAsk = await isPremium(req.userId!);
-  if (!premiumForAsk) {
-    const usedToday = await getAskCountToday(req.userId!);
-    if (usedToday >= FREE_ASK_DAILY_LIMIT) {
-      res.status(403).json({
-        error: `免费版每天可问 AI ${FREE_ASK_DAILY_LIMIT} 次，升级会员无限提问`,
-        code: "ASK_LIMIT",
-        limit: FREE_ASK_DAILY_LIMIT,
-      });
-      return;
-    }
-    await logAskUsage(req.userId!);
-  }
+  const askLimited = !premiumForAsk && (await getAskCountToday(req.userId!)) >= FREE_ASK_DAILY_LIMIT;
 
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-store, no-transform, must-revalidate");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
+
+  if (askLimited) {
+    res.write(
+      `data: ${JSON.stringify({
+        error: `免费版每天可问 AI ${FREE_ASK_DAILY_LIMIT} 次，升级会员无限提问`,
+        code: "ASK_LIMIT",
+      })}\n\n`
+    );
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+  if (!premiumForAsk) {
+    await logAskUsage(req.userId!);
+  }
 
   try {
     const { data: rows, error } = await client

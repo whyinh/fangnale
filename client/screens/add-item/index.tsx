@@ -148,7 +148,15 @@ export default function AddItemScreen() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
+        // 会员门控：免费版物品数达上限，引导升级
+        if (res.status === 403 && err.code === 'ITEM_LIMIT') {
+          Alert.alert('免费版已达上限', err.error || '免费版最多记录 30 件物品，升级会员不限数量', [
+            { text: '升级会员', onPress: () => router.push('/paywall', { reason: 'item_limit' }) },
+            { text: '知道了', style: 'cancel' },
+          ]);
+          return;
+        }
         throw new Error(err.error || '保存失败');
       }
 

@@ -36,7 +36,7 @@ export default function AskModal({ question, onClose }: AskModalProps) {
        * 接口：POST /api/v1/items/ask（SSE 流式输出）
        * Body 参数：question: string
        * Header：x-session（登录态 token）
-       * 事件格式：data: {"delta": "..."}，结束标志 data: [DONE]
+       * 事件格式：data: {"delta": "..."}；门控拦截时 data: {"error": "...", "code": "ASK_LIMIT"}；结束标志 data: [DONE]
        */
       const authHeaders = await getAuthHeaders();
       if (cancelled) return;
