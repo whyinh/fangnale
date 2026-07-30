@@ -1,7 +1,7 @@
 import { authFetch } from '@/utils/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { contactLabel, contactAvatarText } from '@/utils/format';
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import {
   Share,
 } from 'react-native';
 import { Image } from 'expo-image';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { useFocusEffect } from 'expo-router';
@@ -356,6 +357,19 @@ export default function HomeScreen() {
     fetchItems();
   };
 
+  // 激活：前 10 件录入进度激励；达成后引导首次「找」体验，庆祝卡片关闭后不再出现
+  const [activationCelebrated, setActivationCelebrated] = useState(true); // 默认 true，读取完成前不渲染，避免闪现
+  useEffect(() => {
+    AsyncStorage.getItem('activation_celebrated_v1')
+      .then((v) => setActivationCelebrated(v === '1'))
+      .catch(() => {});
+  }, []);
+
+  const handleDismissCelebration = () => {
+    setActivationCelebrated(true);
+    void AsyncStorage.setItem('activation_celebrated_v1', '1').catch(() => {});
+  };
+
   const exitSelection = useCallback(() => {
     setSelectionMode(false);
     setSelectedIds(new Set());
@@ -670,6 +684,56 @@ export default function HomeScreen() {
           </ScrollView>
         </View>
 
+        {/* 激活进度：前 10 件录入激励 / 成型后引导首次「找」体验 */}
+        {!loading && items.length > 0 && (items.length < 10 || !activationCelebrated) && (
+          <View style={styles.activationCard}>
+            {items.length < 10 ? (
+              <>
+                <View style={styles.activationHeader}>
+                  <FontAwesome6 name="rocket" size={13} color="#6C63FF" />
+                  <Text style={styles.activationTitle}>已记住 {items.length} 件物品的位置</Text>
+                  <Text style={styles.activationCount}>{items.length}/10</Text>
+                </View>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${Math.min(Math.max(items.length / 10, 0), 1) * 100}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.activationDesc}>
+                  再录 {10 - items.length} 件，你的物品地图就成型了
+                </Text>
+              </>
+            ) : (
+              <>
+                <View style={styles.activationHeader}>
+                  <FontAwesome6 name="trophy" size={13} color="#F5A623" />
+                  <Text style={styles.activationTitle}>物品地图成型了！</Text>
+                  <TouchableOpacity onPress={handleDismissCelebration} hitSlop={8}>
+                    <FontAwesome6 name="xmark" size={13} color="#B2BEC3" />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.activationDesc}>
+                  找个东西试试——它记得你录过的每一件物品
+                </Text>
+                <TouchableOpacity
+                  style={styles.activationCta}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setAskVisible(true);
+                    handleDismissCelebration();
+                  }}
+                >
+                  <FontAwesome6 name="wand-magic-sparkles" size={12} color="#FFFFFF" />
+                  <Text style={styles.activationCtaText}>问 AI 一句：我的东西在哪？</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
+
         {/* 物品列表 / 位置分组 */}
         {loading || smartSearching ? (
           <View style={styles.loadingContainer}>
@@ -698,8 +762,19 @@ export default function HomeScreen() {
               </>
             ) : (
               <>
-                <Text style={styles.emptyTitle}>还没有物品记录</Text>
-                <Text style={styles.emptySubtitle}>点右下角相机，拍一张就记好了</Text>
+                <Text style={styles.emptyTitle}>从一片区域开始</Text>
+                <Text style={styles.emptySubtitle}>
+                  拍一张抽屉或桌面，AI 一次帮你认出整片区域的物品
+                </Text>
+                <TouchableOpacity
+                  style={styles.emptyCta}
+                  onPress={handleQuickCapture}
+                  activeOpacity={0.85}
+                >
+                  <FontAwesome6 name="layer-group" size={15} color="#FFFFFF" />
+                  <Text style={styles.emptyCtaText}>拍一片区域</Text>
+                </TouchableOpacity>
+                <Text style={styles.emptyHint}>或点右下角相机，从单件开始</Text>
               </>
             )}
           </View>
@@ -1299,6 +1374,94 @@ const styles = StyleSheet.create({
     color: '#636E72',
     marginTop: 8,
     textAlign: 'center',
+  },
+  emptyCta: {
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#6C63FF',
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    borderRadius: 14,
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  emptyCtaText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  emptyHint: {
+    marginTop: 12,
+    fontSize: 12,
+    color: '#B2BEC3',
+  },
+  activationCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 1,
+  },
+  activationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  activationTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#2D3436',
+  },
+  activationCount: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#6C63FF',
+    fontVariant: ['tabular-nums'],
+  },
+  progressTrack: {
+    height: 8,
+    backgroundColor: '#EDEFF5',
+    borderRadius: 4,
+    marginTop: 10,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 8,
+    backgroundColor: '#6C63FF',
+    borderRadius: 4,
+  },
+  activationDesc: {
+    fontSize: 12,
+    color: '#636E72',
+    marginTop: 8,
+    lineHeight: 17,
+  },
+  activationCta: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#6C63FF',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  activationCtaText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   fab: {
     position: 'absolute',
