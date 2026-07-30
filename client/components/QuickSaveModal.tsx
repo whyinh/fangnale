@@ -20,6 +20,7 @@ import { FontAwesome6 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import { createFormDataFile } from '@/utils';
+import { useSafeRouter } from '@/hooks/useSafeRouter';
 
 const EXPO_PUBLIC_BACKEND_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 const LAST_CATEGORY_KEY = '@stashspot_last_category_id';
@@ -82,6 +83,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
   const [newTag, setNewTag] = useState('');
   const [photoKey, setPhotoKey] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState<AiStatus>('idle');
+  const router = useSafeRouter();
   const [saving, setSaving] = useState(false);
   const recognizeStartedFor = useRef<string | null>(null);
   // 连拍与反馈
@@ -372,7 +374,20 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
         }),
       });
 
-      if (!res.ok) throw new Error('保存失败');
+      if (!res.ok) {
+        // 会员门控：免费版物品数达上限 → 引导升级
+        if (res.status === 403) {
+          let body: { code?: string } | null = null;
+          try { body = await res.json(); } catch { /* 忽略解析失败 */ }
+          if (body?.code === 'ITEM_LIMIT') {
+            onClose();
+            Toast.show({ type: 'info', text1: '免费版最多记 30 件', text2: '升级会员，无限记录' });
+            setTimeout(() => router.push('/paywall'), 300);
+            return;
+          }
+        }
+        throw new Error('保存失败');
+      }
 
       // 记住本次分类，下次自动选中
       if (selectedCategory) {
@@ -476,6 +491,7 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
 
     setSaving(true);
     let okCount = 0;
+    let hitLimit = false;
     try {
       /**
        * 服务端文件：server/src/routes/items.ts
@@ -497,10 +513,27 @@ export function QuickSaveModal({ visible, photoUri, presetSpace, onClose, onSave
               note: '',
             }),
           });
-          if (res.ok) okCount += 1;
+          if (res.ok) {
+            okCount += 1;
+          } else if (res.status === 403) {
+            // 会员门控：免费版物品数达上限
+            try { const b = await res.json(); if (b?.code === 'ITEM_LIMIT') hitLimit = true; } catch { /* 忽略解析失败 */ }
+          }
         })
       );
-      if (okCount === 0) throw new Error('all failed');
+      if (okCount === 0) {
+        if (hitLimit) {
+          onClose();
+          Toast.show({ type: 'info', text1: '免费版最多记 30 件', text2: '升级会员，无限记录' });
+          setTimeout(() => router.push('/paywall'), 300);
+          return;
+        }
+        throw new Error('all failed');
+      }
+      if (hitLimit) {
+        // 部分成功但撞上限：提示用户升级
+        Toast.show({ type: 'info', text1: `已存 ${okCount} 件`, text2: '免费版已达上限，升级会员可无限记录' });
+      }
 
       try {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

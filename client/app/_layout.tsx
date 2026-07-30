@@ -7,6 +7,7 @@ import Toast from 'react-native-toast-message';
 import { Provider } from '@/components/Provider';
 import { LinkPreviewContextProvider } from 'expo-router/build/link/preview/LinkPreviewContext';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { MembershipProvider } from '@/contexts/MembershipContext';
 import { setUnauthorizedHandler } from '@/utils/api';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
 
@@ -77,6 +78,7 @@ export default function RootLayout() {
   return (
     <Provider>
       <AuthProvider>
+        <MembershipProvider>
         <LinkPreviewContextProvider>
           <AuthGate>
             <Stack
@@ -94,9 +96,11 @@ export default function RootLayout() {
               <Stack.Screen name="organize" options={{ title: "" }} />
               <Stack.Screen name="space-room" options={{ title: "" }} />
               <Stack.Screen name="space-furniture" options={{ title: "" }} />
+              <Stack.Screen name="paywall" options={{ title: "", presentation: 'modal', animation: 'slide_from_bottom' }} />
             </Stack>
           </AuthGate>
         </LinkPreviewContextProvider>
+        </MembershipProvider>
         <Toast />
       </AuthProvider>
     </Provider>

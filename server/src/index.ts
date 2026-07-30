@@ -7,6 +7,7 @@ import speechRouter from "./routes/speech.js";
 import authRouter from "./routes/auth.js";
 import familiesRouter from "./routes/families.js";
 import locationsRouter from "./routes/locations.js";
+import premiumRouter from "./routes/premium.js";
 import { getSupabasePublicConfig } from "./storage/database/supabase-client.js";
 
 // 全局兜底：未捕获的 Promise 拒绝/异常只记录不崩溃
@@ -43,6 +44,7 @@ app.get("/api/v1/supabase-config", (_req, res) => {
 });
 app.use("/api/v1/families", familiesRouter);
 app.use("/api/v1/locations", locationsRouter);
+app.use("/api/v1/premium", premiumRouter);
 
 // 隐私政策页面（App Store 审核要求，公开访问）
 app.get("/privacy", (_req, res) => {

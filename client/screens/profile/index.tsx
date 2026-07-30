@@ -29,6 +29,7 @@ import * as Clipboard from 'expo-clipboard';
 import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMembership } from '@/contexts/MembershipContext';
 import { authFetch } from '@/utils/api';
 import { formatContact, contactAvatarText } from '@/utils/format';
 
@@ -52,6 +53,7 @@ interface Family {
 
 export default function ProfileScreen() {
   const { user, signOut, updateProfile } = useAuth();
+  const { isPremium, plan, expiresAt, quota } = useMembership();
   const router = useSafeRouter();
   const [nameModalVisible, setNameModalVisible] = useState(false);
   const [nameInput, setNameInput] = useState('');
@@ -410,6 +412,36 @@ export default function ProfileScreen() {
           )}
         </View>
 
+        {/* 会员卡片 */}
+        <TouchableOpacity
+          style={[styles.memberCard, isPremium && styles.memberCardPro]}
+          onPress={() => router.push('/paywall')}
+          activeOpacity={0.85}
+        >
+          <View style={styles.memberCardLeft}>
+            <View style={[styles.memberIconWrap, isPremium && styles.memberIconWrapPro]}>
+              <FontAwesome6 name="crown" size={15} color={isPremium ? '#FFF' : '#6C63FF'} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.memberTitle, isPremium && styles.memberTitlePro]}>
+                {isPremium ? '会员已开通' : '免费版'}
+              </Text>
+              <Text style={[styles.memberSub, isPremium && styles.memberSubPro]} numberOfLines={1}>
+                {isPremium
+                  ? `${plan === 'yearly' ? '年度会员' : '月度会员'}${expiresAt ? ` · ${new Date(expiresAt).toLocaleDateString('zh-CN')} 到期` : ' · 长期有效'}`
+                  : quota
+                    ? `物品 ${quota.itemsUsed}/${quota.itemsLimit} · 今日提问 ${quota.asksUsedToday}/${quota.asksDailyLimit}`
+                    : '升级解锁无限记录与提问'}
+              </Text>
+            </View>
+          </View>
+          <View style={[styles.memberCta, isPremium && styles.memberCtaPro]}>
+            <Text style={[styles.memberCtaText, isPremium && styles.memberCtaTextPro]}>
+              {isPremium ? '查看' : '升级'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
         {/* 新手引导（重看教程） */}
         <TouchableOpacity style={styles.guideRow} onPress={() => router.push('/onboarding')}>
           <View style={styles.guideIconWrap}>
@@ -728,6 +760,74 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0EFFF',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  memberCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 4,
+  },
+  memberCardPro: {
+    backgroundColor: '#6C63FF',
+  },
+  memberCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+    marginRight: 10,
+  },
+  memberIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: '#F0EFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberIconWrapPro: {
+    backgroundColor: 'rgba(255,255,255,0.22)',
+  },
+  memberTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1A1A1A',
+  },
+  memberTitlePro: {
+    color: '#FFF',
+  },
+  memberSub: {
+    fontSize: 12,
+    color: '#9EA0A5',
+    marginTop: 2,
+  },
+  memberSubPro: {
+    color: 'rgba(255,255,255,0.85)',
+  },
+  memberCta: {
+    backgroundColor: '#6C63FF',
+    borderRadius: 999,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+  },
+  memberCtaPro: {
+    backgroundColor: 'rgba(255,255,255,0.22)',
+  },
+  memberCtaText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  memberCtaTextPro: {
+    color: '#FFF',
   },
   guideRowText: {
     flex: 1,

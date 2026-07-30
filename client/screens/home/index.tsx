@@ -1,6 +1,7 @@
 import { authFetch } from '@/utils/api';
 import { photoProxyUrl } from '@/utils/photo';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMembership } from '@/contexts/MembershipContext';
 import { contactLabel, contactAvatarText } from '@/utils/format';
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
@@ -253,6 +254,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useSafeRouter();
   const { user } = useAuth();
+  const { isPremium, quota, incrementAskUsage, refresh: refreshMembership } = useMembership();
   const myEmail = user?.email || user?.phone || null;
   const [items, setItems] = useState<Item[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -377,7 +379,9 @@ export default function HomeScreen() {
     useCallback(() => {
       fetchCategories();
       fetchItems();
-    }, [fetchCategories, fetchItems])
+      // 回到首页顺带刷新会员配额（问 AI 次数等）
+      refreshMembership();
+    }, [fetchCategories, fetchItems, refreshMembership])
   );
 
   // 下拉刷新：列表保持显示（loading 分支只兜首次空数据骨架屏），指示器由 RefreshControl 呈现
@@ -434,8 +438,22 @@ export default function HomeScreen() {
       Alert.alert('问一问', '先在搜索框输入你的问题，例如：\n\n我的护照放在哪？\n书房里有什么？\n什么东西快过期了？');
       return;
     }
+    // 免费版每日提问配额预检（quota 未加载时放行，由服务端 403 兜底；limit 为 null 表示不限）
+    if (!isPremium && quota && quota.asksDailyLimit !== null && quota.asksUsedToday >= quota.asksDailyLimit) {
+      Alert.alert(
+        '今日免费提问已用完',
+        `免费版每天可问 AI ${quota.asksDailyLimit} 次，升级会员无限提问`,
+        [
+          { text: '明天再来', style: 'cancel' },
+          { text: '升级会员', onPress: () => router.push('/paywall') },
+        ]
+      );
+      return;
+    }
     setAskQuestion(q);
     setAskVisible(true);
+    // 与服务端计费时机对齐：进入提问流即计 1 次（本地同步，服务端 usage_logs 为准）
+    incrementAskUsage();
   };
 
   const handleCategorySelect = (categoryId: number | null) => {

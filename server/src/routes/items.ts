@@ -3,6 +3,14 @@ import multer from "multer";
 import { S3Storage, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { getSupabaseClient } from "../storage/database/supabase-client.js";
 import { requireAuth, getVisibleOwnerIds, getFamilyMemberMap } from "../middleware/auth.js";
+import {
+  isPremium,
+  getItemCount,
+  getAskCountToday,
+  logAskUsage,
+  FREE_ITEM_LIMIT,
+  FREE_ASK_DAILY_LIMIT,
+} from "../utils/premium.js";
 import { resolveCategoryId, type CategoryBrief } from "../utils/auto-category.js";
 import { buildPathMap, type LocationRow } from "../utils/location-tree.js";
 
@@ -638,6 +646,22 @@ router.post("/ask", async (req, res) => {
     return;
   }
 
+  // 会员门控（必须在 SSE 响应头设置之前完成，否则无法再返回错误状态码）
+  // 免费用户每日限问 FREE_ASK_DAILY_LIMIT 次；会员不限
+  const premiumForAsk = await isPremium(req.userId!);
+  if (!premiumForAsk) {
+    const usedToday = await getAskCountToday(req.userId!);
+    if (usedToday >= FREE_ASK_DAILY_LIMIT) {
+      res.status(403).json({
+        error: `免费版每天可问 AI ${FREE_ASK_DAILY_LIMIT} 次，升级会员无限提问`,
+        code: "ASK_LIMIT",
+        limit: FREE_ASK_DAILY_LIMIT,
+      });
+      return;
+    }
+    await logAskUsage(req.userId!);
+  }
+
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-store, no-transform, must-revalidate");
   res.setHeader("Connection", "keep-alive");
@@ -791,6 +815,22 @@ ${JSON.stringify(inventory)}
 // category_id 为空或不属于当前用户可见范围时，自动兜底到「其他」分类（不存在则创建）
 router.post("/", async (req, res) => {
   const { name, category_id, location, location_id, tags, photo_key, note, expiry_date } = req.body;
+
+  // 会员门控：免费用户物品上限 FREE_ITEM_LIMIT 件（本人创建的物品）；会员不限
+  // 单件与一拍多录的批量保存都走此接口，此处门控一处即可全覆盖
+  const premiumForCreate = await isPremium(req.userId!);
+  if (!premiumForCreate) {
+    const used = await getItemCount(req.userId!);
+    if (used >= FREE_ITEM_LIMIT) {
+      res.status(403).json({
+        error: `免费版最多记录 ${FREE_ITEM_LIMIT} 件物品，升级会员不限数量`,
+        code: "ITEM_LIMIT",
+        limit: FREE_ITEM_LIMIT,
+        used,
+      });
+      return;
+    }
+  }
 
   // location_id 校验：必须是当前用户可见的空间节点；非法值静默忽略（不阻断保存）
   let finalLocationId: number | null = null;
