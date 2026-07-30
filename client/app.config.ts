@@ -12,11 +12,19 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "fangnale",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      // ⚠️ bundleIdentifier 一经发布不可更改，上架前请确认
+      "bundleIdentifier": "com.fangnale.app",
+      "buildNumber": "1",
+      // 暂不适配 iPad（仅需 iPhone 截图即可提审）
+      "supportsTablet": false,
+      "infoPlist": {
+        // 仅使用 HTTPS 标准加密，属出口合规豁免（避免每次提审手动填加密问卷）
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -49,29 +57,21 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       [
         "expo-image-picker",
         {
-          "photosPermission": `允许放哪了访问您的相册，以便您上传或保存图片。`,
-          "cameraPermission": `允许放哪了使用您的相机，以便您直接拍摄照片上传。`,
-          "microphonePermission": `允许放哪了访问您的麦克风，以便您拍摄带有声音的视频。`
+          "photosPermission": `允许"放哪了"访问相册，以便选择物品照片进行 AI 识别并记录存放位置。`,
+          "cameraPermission": `允许"放哪了"使用相机拍摄物品照片，用于 AI 识别并记录物品存放位置。`
         }
       ],
       [
         "expo-av",
         {
-          "microphonePermission": `允许放哪了使用您的麦克风，以便您通过语音快速记录和查找物品。`
-        }
-      ],
-      [
-        "expo-location",
-        {
-          "locationWhenInUsePermission": `放哪了需要访问您的位置以提供周边服务及导航功能。`
+          "microphonePermission": `允许"放哪了"使用麦克风，以便通过语音快速记录和查找物品。`
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": `放哪了需要访问相机以拍摄照片和视频。`,
-          "microphonePermission": `放哪了需要访问麦克风以录制视频声音。`,
-          "recordAudioAndroid": true
+          "cameraPermission": `允许"放哪了"使用相机拍摄物品照片，用于 AI 识别并记录物品存放位置。`,
+          "recordAudioAndroid": false
         }
       ]
     ],
