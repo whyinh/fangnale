@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -109,7 +109,7 @@ export default function OnboardingScreen() {
             setActiveIndex(Math.min(Math.max(idx, 0), SLIDES.length - 1));
           }}
           renderItem={({ item, index }) => (
-            <Slide item={item} index={index} scrollX={scrollX} />
+            <Slide item={item} index={index} scrollX={scrollX} isActive={index === activeIndex} />
           )}
           style={styles.flex}
         />
@@ -121,7 +121,7 @@ export default function OnboardingScreen() {
             ))}
           </View>
           <TouchableOpacity style={styles.ctaBtn} onPress={handleNext} activeOpacity={0.85}>
-            <Text style={styles.ctaText}>{isLast ? '立即开始' : '下一步'}</Text>
+            <Text style={styles.ctaText}>{isLast ? '免费开始记录' : '下一步'}</Text>
             <FontAwesome6 name={isLast ? 'check' : 'arrow-right'} size={14} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
@@ -134,11 +134,33 @@ function Slide({
   item,
   index,
   scrollX,
+  isActive,
 }: {
   item: SlideDef;
   index: number;
   scrollX: Animated.Value;
+  isActive: boolean;
 }) {
+  // 对话演示：切到本屏时逐条出现（问句 → 停顿 → AI 回答），离开重置以便重播
+  const userAnim = useRef(new Animated.Value(0)).current;
+  const aiAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (item.kind !== 'chat') return;
+    if (isActive) {
+      userAnim.setValue(0);
+      aiAnim.setValue(0);
+      Animated.sequence([
+        Animated.timing(userAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.delay(400),
+        Animated.timing(aiAnim, { toValue: 1, duration: 420, useNativeDriver: true }),
+      ]).start();
+    } else {
+      userAnim.setValue(0);
+      aiAnim.setValue(0);
+    }
+  }, [isActive, item.kind, userAnim, aiAnim]);
+
   const inputRange = [(index - 1) * SCREEN_WIDTH, index * SCREEN_WIDTH, (index + 1) * SCREEN_WIDTH];
   const visualScale = scrollX.interpolate({
     inputRange,
@@ -179,17 +201,27 @@ function Slide({
           </>
         ) : (
           <View style={styles.chatMock}>
-            <View style={styles.chatBubbleUser}>
+            <Animated.View
+              style={[styles.chatBubbleUser, {
+                opacity: userAnim,
+                transform: [{ translateY: userAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
+              }]}
+            >
               <Text style={styles.chatUserText}>我的护照在哪？</Text>
-            </View>
-            <View style={styles.chatBubbleAi}>
+            </Animated.View>
+            <Animated.View
+              style={[styles.chatBubbleAi, {
+                opacity: aiAnim,
+                transform: [{ translateY: aiAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
+              }]}
+            >
               <View style={styles.chatAiHeader}>
                 <FontAwesome6 name="location-dot" size={12} color="#00B894" />
                 <Text style={styles.chatAiLabel}>放哪了 AI</Text>
               </View>
               <Text style={styles.chatAiText}>在「主卧 / 衣柜 / 顶层」</Text>
               <Text style={styles.chatAiMeta}>12 天前录入 · 有照片可查看</Text>
-            </View>
+            </Animated.View>
             <View style={styles.chatHintRow}>
               <FontAwesome6 name={item.icon} size={11} color="#8B83C8" />
               <Text style={styles.chatHint}>真实回答，来自你录过的物品</Text>

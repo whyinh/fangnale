@@ -1,7 +1,7 @@
 import { authFetch } from '@/utils/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { contactLabel, contactAvatarText } from '@/utils/format';
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import {
   TouchableWithoutFeedback,
   Keyboard,
   Share,
+  Animated,
 } from 'react-native';
 import { Image } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -370,6 +371,17 @@ export default function HomeScreen() {
     void AsyncStorage.setItem('activation_celebrated_v1', '1').catch(() => {});
   };
 
+  // 进度条平滑动画：件数变化时过渡到新进度（width 动画需关闭 native driver）
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: Math.min(items.length / 10, 1),
+      duration: 500,
+      useNativeDriver: false,
+    }).start();
+  }, [items.length]);
+  const progressWidth = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['4%', '100%'] });
+
   const exitSelection = useCallback(() => {
     setSelectionMode(false);
     setSelectedIds(new Set());
@@ -688,24 +700,26 @@ export default function HomeScreen() {
         {!loading && items.length > 0 && (items.length < 10 || !activationCelebrated) && (
           <View style={styles.activationCard}>
             {items.length < 10 ? (
-              <>
+              <TouchableOpacity activeOpacity={0.85} onPress={handleQuickCapture}>
                 <View style={styles.activationHeader}>
                   <FontAwesome6 name="rocket" size={13} color="#6C63FF" />
                   <Text style={styles.activationTitle}>已记住 {items.length} 件物品的位置</Text>
                   <Text style={styles.activationCount}>{items.length}/10</Text>
                 </View>
                 <View style={styles.progressTrack}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${Math.min(Math.max(items.length / 10, 0), 1) * 100}%` },
-                    ]}
-                  />
+                  <Animated.View style={[styles.progressFill, { width: progressWidth }]} />
                 </View>
-                <Text style={styles.activationDesc}>
-                  再录 {10 - items.length} 件，你的物品地图就成型了
-                </Text>
-              </>
+                <View style={styles.activationDescRow}>
+                  <Text style={styles.activationDesc}>
+                    {items.length <= 3
+                      ? `好的开始！再录 ${10 - items.length} 件就成型`
+                      : items.length <= 6
+                        ? `过半了，再录 ${10 - items.length} 件`
+                        : `快成型了，就差 ${10 - items.length} 件`}
+                  </Text>
+                  <Text style={styles.activationHint}>点我继续录</Text>
+                </View>
+              </TouchableOpacity>
             ) : (
               <>
                 <View style={styles.activationHeader}>
@@ -718,17 +732,27 @@ export default function HomeScreen() {
                 <Text style={styles.activationDesc}>
                   找个东西试试——它记得你录过的每一件物品
                 </Text>
-                <TouchableOpacity
-                  style={styles.activationCta}
-                  activeOpacity={0.85}
-                  onPress={() => {
-                    setAskVisible(true);
-                    handleDismissCelebration();
-                  }}
-                >
-                  <FontAwesome6 name="wand-magic-sparkles" size={12} color="#FFFFFF" />
-                  <Text style={styles.activationCtaText}>问 AI 一句：我的东西在哪？</Text>
-                </TouchableOpacity>
+                <View style={styles.activationCtaRow}>
+                  <TouchableOpacity
+                    style={[styles.activationCta, styles.activationCtaPrimary]}
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      setAskVisible(true);
+                      handleDismissCelebration();
+                    }}
+                  >
+                    <FontAwesome6 name="wand-magic-sparkles" size={12} color="#FFFFFF" />
+                    <Text style={styles.activationCtaText}>问 AI 一句</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.activationCta, styles.activationCtaGhost]}
+                    activeOpacity={0.85}
+                    onPress={handleShare}
+                  >
+                    <FontAwesome6 name="share-nodes" size={12} color="#6C63FF" />
+                    <Text style={styles.activationCtaGhostText}>分享给朋友</Text>
+                  </TouchableOpacity>
+                </View>
               </>
             )}
           </View>
@@ -1447,21 +1471,48 @@ const styles = StyleSheet.create({
     marginTop: 8,
     lineHeight: 17,
   },
-  activationCta: {
+  activationCtaRow: {
     marginTop: 10,
-    alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+  },
+  activationCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#6C63FF',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 10,
+  },
+  activationCtaPrimary: {
+    flex: 1,
+    backgroundColor: '#6C63FF',
+  },
+  activationCtaGhost: {
+    flex: 1,
+    backgroundColor: '#6C63FF14',
   },
   activationCtaText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  activationCtaGhostText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6C63FF',
+  },
+  activationDescRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  activationHint: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6C63FF',
   },
   fab: {
     position: 'absolute',
