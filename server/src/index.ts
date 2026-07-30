@@ -113,6 +113,68 @@ app.get("/privacy", (_req, res) => {
 </html>`);
 });
 
+// 会员服务协议页面（App Store 订阅审核要求，公开访问）
+app.get("/terms", (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>会员服务协议 - 放哪了</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; max-width: 720px; margin: 0 auto; padding: 32px 20px 64px; color: #1a1a2e; line-height: 1.8; }
+  h1 { font-size: 26px; } h2 { font-size: 18px; margin-top: 32px; }
+  p, li { font-size: 15px; color: #333; }
+  .updated { color: #888; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>会员服务协议</h1>
+<p class="updated">更新日期：2026 年 3 月 1 日 · 生效日期：2026 年 3 月 1 日</p>
+<p>本协议是您与"放哪了"（以下简称"本应用"）之间关于会员订阅服务的约定。购买会员即表示您已阅读并同意本协议。</p>
+
+<h2>一、会员权益</h2>
+<ul>
+  <li>会员有效期内可无限量记录物品、无限次使用 AI 语音查找等全部高级功能。</li>
+  <li>免费版可记录 30 件物品、每日使用 3 次 AI 查找，基础记录与查找功能永久免费。</li>
+</ul>
+
+<h2>二、套餐与价格</h2>
+<ul>
+  <li><strong>连续包月</strong>：¥12/月，每月自动续费。</li>
+  <li><strong>连续包年</strong>：¥45/年（首发早鸟价，未来可能恢复 ¥88/年），每年自动续费。</li>
+  <li><strong>终身买断</strong>：¥168，一次性购买，永久有效，不再续费。</li>
+</ul>
+
+<h2>三、自动续期与取消</h2>
+<ul>
+  <li>连续包月/包年为<strong>自动续期订阅</strong>：苹果将在每个订阅周期结束前 24 小时内，从您的 Apple ID 绑定支付方式中自动扣取下一周期费用。</li>
+  <li><strong>随时取消</strong>：您可随时前往 iPhone「设置 → 您的姓名（Apple ID）→ 订阅」中取消订阅。取消后，当期已付费的会员权益保持至周期结束，此后不再扣费。</li>
+  <li>取消需在当期结束前至少 24 小时操作，否则将进入下一周期扣费。</li>
+</ul>
+
+<h2>四、退款</h2>
+<p>订阅费用由苹果公司收取，退款需通过 Apple 官方渠道（reportaproblem.apple.com）申请，适用苹果退款政策。本应用无法直接处理退款。</p>
+
+<h2>五、恢复购买</h2>
+<p>更换设备或重装应用后，可在会员页点击"恢复购买"，凭原 Apple ID 的购买记录恢复会员权益，无需重复付费。</p>
+
+<h2>六、账号与家庭共享</h2>
+<ul>
+  <li>会员权益绑定您的本应用账号，请勿向他人出借、转让账号。</li>
+  <li>如苹果家庭共享适用，以 App Store 商品页展示为准。</li>
+</ul>
+
+<h2>七、服务调整</h2>
+<p>我们可能根据运营情况调整会员权益或价格，调整前会在应用内提前公示；已生效周期内的权益不受价格调整影响。</p>
+
+<h2>八、联系我们</h2>
+<p>如对会员服务有任何疑问，请联系：<strong>support@fangnale.app</strong></p>
+</body>
+</html>`);
+});
+
 // Error handling middleware
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("Server error:", err.message);

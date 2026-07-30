@@ -40,10 +40,10 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     desc: '一次付费，终身使用，再无续费',
   },
   monthly: {
-    title: '月度会员',
+    title: '连续包月',
     price: '¥12',
     unit: '/月',
-    desc: '按月订阅，随时取消',
+    desc: '每月自动续费 · 随时取消',
   },
 };
 

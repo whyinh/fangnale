@@ -78,6 +78,10 @@ export default function PaywallScreen() {
     void Linking.openURL(`${API_BASE}/privacy`);
   };
 
+  const openTerms = () => {
+    void Linking.openURL(`${API_BASE}/terms`);
+  };
+
   return (
     <Screen safeAreaEdges={['top', 'bottom']}>
       <View style={styles.container}>
@@ -201,17 +205,18 @@ export default function PaywallScreen() {
                 <Text style={styles.restoreText}>{restoring ? '正在恢复…' : '恢复购买'}</Text>
               </TouchableOpacity>
 
-              {/* 订阅条款 */}
+              {/* 订阅条款（App Store 审核要求的自动续期说明） */}
               <Text style={styles.termsText}>
-                订阅将按所选周期自动续费，可随时在系统设置中取消；取消后当期会员权益保持至周期结束。
+                连续包月/包年订阅将在每个周期结束前 24 小时内自动扣费续期。可随时前往 iPhone「设置 → Apple ID →
+                订阅」取消，取消后当期会员权益保持至周期结束，不再续费。终身买断为一次性购买，永久有效。
               </Text>
               <View style={styles.linkRow}>
                 <TouchableOpacity onPress={openPrivacy}>
                   <Text style={styles.linkText}>隐私政策</Text>
                 </TouchableOpacity>
                 <Text style={styles.linkDivider}>·</Text>
-                <TouchableOpacity onPress={openPrivacy}>
-                  <Text style={styles.linkText}>用户协议</Text>
+                <TouchableOpacity onPress={openTerms}>
+                  <Text style={styles.linkText}>会员服务协议</Text>
                 </TouchableOpacity>
               </View>
             </>
