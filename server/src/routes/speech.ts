@@ -1,7 +1,8 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import multer from "multer";
-import { ASRClient, TTSClient, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { llmInvoke } from "../services/llm.js";
+import { asrRecognize, ttsSynthesize } from "../services/speech.js";
 import { getSupabaseClient } from "../storage/database/supabase-client";
 import { requireAuth, getVisibleOwnerIds } from "../middleware/auth.js";
 import { resolveCategoryId, type CategoryBrief } from "../utils/auto-category.js";
@@ -36,14 +37,8 @@ router.post("/voice-note", upload.single("audio"), async (req: Request, res: Res
       res.status(400).json({ error: "请上传音频" });
       return;
     }
-    const customHeaders = HeaderUtils.extractForwardHeaders(
-      req.headers as Record<string, string>
-    );
-    const config = new Config();
-
     // 1. ASR 转写
-    const asr = new ASRClient(config, customHeaders);
-    const asrResult = await asr.recognize({
+    const asrResult = await asrRecognize({
       uid: "voice-note",
       base64Data: req.file.buffer.toString("base64"),
     });
@@ -62,7 +57,6 @@ router.post("/voice-note", upload.single("audio"), async (req: Request, res: Res
       .order("id", { ascending: true });
     const categoryNames = (cats || []).map((c: { name: string }) => c.name);
 
-    const llm = new LLMClient(config, customHeaders);
     const prompt = `你是物品收纳记录助手。用户用语音说了一句话，描述把某物品放在了哪里。请拆解为结构化数据，返回严格 JSON（不要输出任何其他内容）：
 {
   "name": "物品名称（简洁，2-10个字）",
@@ -73,7 +67,7 @@ router.post("/voice-note", upload.single("audio"), async (req: Request, res: Res
 分类列表：${categoryNames.join("、")}
 用户原话：${transcript}`;
 
-    const response = await llm.invoke([{ role: "user", content: prompt }], {
+    const response = await llmInvoke([{ role: "user", content: prompt }], {
       model: LLM_MODEL,
       temperature: 0.2,
     });
@@ -129,11 +123,7 @@ router.post("/transcribe", upload.single("audio"), async (req: Request, res: Res
       res.status(400).json({ error: "请上传音频" });
       return;
     }
-    const customHeaders = HeaderUtils.extractForwardHeaders(
-      req.headers as Record<string, string>
-    );
-    const asr = new ASRClient(new Config(), customHeaders);
-    const asrResult = await asr.recognize({
+    const asrResult = await asrRecognize({
       uid: "voice-ask",
       base64Data: req.file.buffer.toString("base64"),
     });
@@ -162,11 +152,7 @@ router.post("/tts", async (req: Request, res: Response) => {
       res.status(400).json({ error: "请提供文本" });
       return;
     }
-    const customHeaders = HeaderUtils.extractForwardHeaders(
-      req.headers as Record<string, string>
-    );
-    const tts = new TTSClient(new Config(), customHeaders);
-    const result = await tts.synthesize({
+    const result = await ttsSynthesize({
       uid: "voice-ask",
       text: text.trim().slice(0, 300),
       speaker: "zh_female_vv_uranus_bigtts",

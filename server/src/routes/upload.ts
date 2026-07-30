@@ -1,17 +1,9 @@
 import { Router } from "express";
 import multer from "multer";
-import { S3Storage } from "coze-coding-dev-sdk";
+import { storageUpload, storagePresignedUrl } from "../services/storage";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
-
-const storage = new S3Storage({
-  endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
-  accessKey: "",
-  secretKey: "",
-  bucketName: process.env.COZE_BUCKET_NAME,
-  region: "cn-beijing",
-});
 
 // GET /api/v1/upload/photo?key=xxx - 图片代理（302 重定向到签名 URL）
 // 免登录：key 为不可枚举的随机路径，与签名 URL 的公开可访问性质一致
@@ -29,7 +21,7 @@ router.get("/photo", async (req, res) => {
     return;
   }
   try {
-    const signedUrl = await storage.generatePresignedUrl({
+    const signedUrl = await storagePresignedUrl({
       key,
       expireTime: 86400 * 30,
     });
@@ -60,13 +52,13 @@ router.post("/photo", upload.single("file"), async (req, res) => {
   const ext = originalname.split(".").pop() || "jpg";
   const fileName = `items/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
-  const fileKey = await storage.uploadFile({
+  const fileKey = await storageUpload({
     fileContent: buffer,
     fileName,
     contentType: mimetype,
   });
 
-  const signedUrl = await storage.generatePresignedUrl({
+  const signedUrl = await storagePresignedUrl({
     key: fileKey,
     expireTime: 86400 * 30, // 30 days
   });
@@ -83,7 +75,7 @@ router.post("/photo-url", async (req, res) => {
     return;
   }
 
-  const signedUrl = await storage.generatePresignedUrl({
+  const signedUrl = await storagePresignedUrl({
     key,
     expireTime: 86400 * 30,
   });

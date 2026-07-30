@@ -1,6 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
-import { S3Storage, LLMClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { llmInvoke, llmStream } from "../services/llm.js";
+import { storageUpload, storagePresignedUrl } from "../services/storage.js";
 import { getSupabaseClient } from "../storage/database/supabase-client.js";
 import { requireAuth, getVisibleOwnerIds, getFamilyMemberMap } from "../middleware/auth.js";
 import {
@@ -23,14 +24,6 @@ router.use(requireAuth);
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
-});
-
-const storage = new S3Storage({
-  endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
-  accessKey: "",
-  secretKey: "",
-  bucketName: process.env.COZE_BUCKET_NAME,
-  region: "cn-beijing",
 });
 
 // 从 LLM 输出中提取 JSON 对象（容忍 markdown 代码块包裹）
@@ -182,9 +175,7 @@ router.post("/organize/analyze", async (req, res) => {
       return `${it.id}|${it.name}|${catName.get(it.category_id as number) || "未知"}|${it.location || "无位置"}|记录${days}天`;
     });
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as Record<string, string>);
-    const llm = new LLMClient(new Config(), customHeaders);
-    const response = await llm.invoke(
+    const response = await llmInvoke(
       [
         {
           role: "system",
@@ -435,7 +426,7 @@ router.post("/recognize", upload.single("photo"), async (req, res) => {
     const { buffer, originalname, mimetype } = req.file;
     const ext = originalname.split(".").pop() || "jpg";
     const fileName = `items/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const photoKey = await storage.uploadFile({
+    const photoKey = await storageUpload({
       fileContent: buffer,
       fileName,
       contentType: mimetype,
@@ -459,10 +450,6 @@ router.post("/recognize", upload.single("photo"), async (req, res) => {
     let categoryCreated = false;
 
     try {
-      const customHeaders = HeaderUtils.extractForwardHeaders(
-        req.headers as unknown as Record<string, string>
-      );
-      const llm = new LLMClient(new Config(), customHeaders);
       const dataUri = `data:${mimetype || "image/jpeg"};base64,${buffer.toString("base64")}`;
 
       const prompt = [
@@ -476,7 +463,7 @@ router.post("/recognize", upload.single("photo"), async (req, res) => {
         '- 如果照片模糊或无法辨认物品，name 返回"未识别物品"，tags 返回空数组，category 返回"其他"',
       ].join("\n");
 
-      const response = await llm.invoke(
+      const response = await llmInvoke(
         [
           {
             role: "user",
@@ -552,7 +539,7 @@ router.post("/recognize-multi", upload.single("photo"), async (req, res) => {
     const { buffer, originalname, mimetype } = req.file;
     const ext = originalname.split(".").pop() || "jpg";
     const fileName = `items/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const photoKey = await storage.uploadFile({
+    const photoKey = await storageUpload({
       fileContent: buffer,
       fileName,
       contentType: mimetype,
@@ -574,10 +561,6 @@ router.post("/recognize-multi", upload.single("photo"), async (req, res) => {
     let multiItems: MultiItem[] = [];
 
     try {
-      const customHeaders = HeaderUtils.extractForwardHeaders(
-        req.headers as unknown as Record<string, string>
-      );
-      const llm = new LLMClient(new Config(), customHeaders);
       const dataUri = `data:${mimetype || "image/jpeg"};base64,${buffer.toString("base64")}`;
 
       const prompt = [
@@ -592,7 +575,7 @@ router.post("/recognize-multi", upload.single("photo"), async (req, res) => {
         '- 如果完全无法辨认任何物品，items 返回空数组',
       ].join("\n");
 
-      const response = await llm.invoke(
+      const response = await llmInvoke(
         [
           {
             role: "user",
@@ -693,8 +676,6 @@ router.post("/ask", async (req, res) => {
       };
     });
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as Record<string, string>);
-    const llm = new LLMClient(new Config(), customHeaders);
     const today = new Date().toISOString().slice(0, 10);
     const systemPrompt = `你是家庭物品查找助手。今天是${today}。用户用自然语言问你东西放在哪里，请根据下方物品清单 JSON 回答。
 物品清单（JSON）：
@@ -709,7 +690,7 @@ ${JSON.stringify(inventory)}
 - 多个匹配时全部列出；用户问"某位置有什么"时列出该位置所有物品
 - 全程不超过 120 字，不要用 markdown 格式`;
 
-    const stream = llm.stream(
+    const stream = llmStream(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: question.trim().slice(0, 200) },
@@ -766,9 +747,7 @@ router.post("/smart-search", async (req, res) => {
       };
     });
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as Record<string, string>);
-    const llm = new LLMClient(new Config(), customHeaders);
-    const response = await llm.invoke(
+    const response = await llmInvoke(
       [
         {
           role: "system",
