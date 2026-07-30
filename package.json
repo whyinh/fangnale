@@ -16,7 +16,8 @@
   "devDependencies": {},
   "packageManager": "pnpm@9.0.0",
   "engines": {
-    "pnpm": ">=9.0.0"
+    "pnpm": ">=9.0.0",
+    "node": ">=20"
   },
   "pnpm": {
     "overrides": {
