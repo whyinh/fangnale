@@ -6,6 +6,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { authFetch } from '@/utils/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { configurePurchases } from '@/utils/purchase';
 
 const API_BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL || '';
 
@@ -30,7 +31,7 @@ interface MembershipValue {
 const MembershipContext = createContext<MembershipValue | null>(null);
 
 export function MembershipProvider({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const [isPremium, setIsPremium] = useState(false);
   const [plan, setPlan] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
@@ -70,6 +71,15 @@ export function MembershipProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 登录后初始化支付渠道（iOS 为 RevenueCat；web/开发模式为 no-op）
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      void configurePurchases(user.id).catch(() => {
+        /* 支付初始化失败不影响主流程，购买/恢复时仍会重试 */
+      });
+    }
+  }, [isAuthenticated, user?.id]);
 
   const incrementAskUsage = useCallback(() => {
     setQuota((prev) => (prev ? { ...prev, asksUsedToday: prev.asksUsedToday + 1 } : prev));

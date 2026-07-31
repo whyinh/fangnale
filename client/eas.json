@@ -17,8 +17,8 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_BACKEND_BASE_URL": "https://YOUR_BACKEND_DOMAIN",
-        "EXPO_PUBLIC_API_BASE": "https://YOUR_BACKEND_DOMAIN"
+        "EXPO_PUBLIC_BACKEND_BASE_URL": "https://api.fangnale.cn",
+        "EXPO_PUBLIC_API_BASE": "https://api.fangnale.cn"
       }
     }
   },

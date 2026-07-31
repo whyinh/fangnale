@@ -15,7 +15,7 @@ import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { useMembership } from '@/contexts/MembershipContext';
-import { purchasePlan, restorePurchases, PLANS, type PlanId } from '@/utils/purchase';
+import { purchasePlan, restorePurchases, PLANS, isPurchaseCancelled, type PlanId } from '@/utils/purchase';
 
 const ACCENT = '#6C63FF';
 const API_BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL || '';
@@ -58,6 +58,8 @@ export default function PaywallScreen() {
       }
       router.back();
     } catch (e) {
+      // 用户主动取消购买：静默返回，不弹失败提示
+      if (isPurchaseCancelled(e)) return;
       Alert.alert('开通失败', e instanceof Error ? e.message : '请稍后重试');
     } finally {
       setSubmitting(false);

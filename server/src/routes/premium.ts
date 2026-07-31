@@ -128,4 +128,77 @@ router.post("/dev-deactivate", requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/v1/premium/iap-sync
+ * 【App Store IAP】客户端 RevenueCat 扣款成功后调用。
+ * 服务端用 RevenueCat Secret API Key 查询该用户的 entitlement，
+ * 校验有效才写入会员表（provider='app_store'）——不轻信客户端上报。
+ * Body: 无（以登录用户 ID 作为 RevenueCat appUserID）
+ * 响应：{ isPremium, plan?, expiresAt?, unchanged? }
+ */
+router.post("/iap-sync", requireAuth, async (req, res) => {
+  const apiKey = process.env.REVENUECAT_API_KEY;
+  if (!apiKey) {
+    return res.status(503).json({ error: "支付服务未配置", code: "IAP_NOT_CONFIGURED" });
+  }
+  try {
+    const userId = req.userId!;
+    // RevenueCat 服务端查询订阅状态（REST API v1）
+    const rcRes = await fetch(
+      `https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(userId)}`,
+      { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" } },
+    );
+    if (rcRes.status === 404) {
+      // RevenueCat 中无此用户购买记录
+      return res.json({ isPremium: false });
+    }
+    if (!rcRes.ok) {
+      console.error("[premium] RevenueCat 查询失败:", rcRes.status);
+      return res.status(502).json({ error: "支付状态校验失败，请稍后重试" });
+    }
+
+    const data: any = await rcRes.json();
+    const ent = data?.subscriber?.entitlements?.premium;
+    const expiresAt: string | null = ent?.expires_date ?? null;
+    const active = !!ent && (!expiresAt || new Date(expiresAt).getTime() > Date.now());
+    if (!active) {
+      return res.json({ isPremium: false });
+    }
+
+    // 商品 ID → 套餐（fangnale_lifetime 为终身买断，expires_date 为 null）
+    const productId: string = ent?.product_identifier ?? "";
+    const plan = productId.includes("lifetime")
+      ? "lifetime"
+      : productId.includes("yearly")
+        ? "yearly"
+        : "monthly";
+
+    // 幂等：当前有效会员与本次校验结果一致则直接返回（购买/恢复/刷新会多次触发本接口）
+    const current = await getActiveMembership(userId);
+    if (current?.provider === "app_store" && current.plan === plan && current.expiresAt === expiresAt) {
+      return res.json({ ok: true, isPremium: true, plan, expiresAt, unchanged: true });
+    }
+    // 终身为最高级：已是终身且本次非终身，不降级（防止订阅同步覆盖买断权益）
+    if (current?.plan === "lifetime" && plan !== "lifetime") {
+      return res.json({ ok: true, isPremium: true, plan: "lifetime", expiresAt: null, unchanged: true });
+    }
+
+    const { error } = await client.from("premium_memberships").insert({
+      user_id: userId,
+      plan,
+      status: "active",
+      provider: "app_store",
+      expires_at: expiresAt,
+    });
+    if (error) {
+      console.error("[premium] IAP 会员写入失败:", error.message);
+      return res.status(500).json({ error: "会员状态同步失败，请稍后重试" });
+    }
+    return res.json({ ok: true, isPremium: true, plan, expiresAt });
+  } catch (error: any) {
+    console.error("[premium] IAP 同步异常:", error?.message);
+    return res.status(500).json({ error: "会员状态同步失败，请稍后重试" });
+  }
+});
+
 export default router;
